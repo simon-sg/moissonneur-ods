@@ -152,6 +152,28 @@ traitement d'un autre nœud. Vérification (après quelques minutes) :
 curl -s 'http://rudi.localhost/konsult/v1/datasets/metadatas?limit=1&offset=0'  # champ total
 ```
 
+## Tester bout-en-bout contre plusieurs plateformes ODS
+
+`--reinitialiser-noeud` vide le contenu local d'un nœud (ressources +
+organisations, et le(s) fichier(s) d'état) sans toucher à un éventuel
+raccordement portail — pour enchaîner des tests sur des plateformes et des
+paramètres différents sans recréer le nœud à chaque fois :
+
+```bash
+python3 -m moissonneur_ods --url https://data.rennesmetropole.fr \
+    --mode=lien --rudi-conf conf/rudi_node.json
+
+python3 -m moissonneur_ods --rudi-conf conf/rudi_node.json --reinitialiser-noeud
+# Taper REINITIALISER pour confirmer
+
+python3 -m moissonneur_ods --url https://data.nantesmetropole.fr \
+    --mode=copie --rudi-conf conf/rudi_node.json
+```
+
+Validé en conditions réelles (2026-10-11) : moisson Rennes (8 JDD) → réinit
+(8 ressources + 6 organisations + état supprimés, 0 échec) → moisson Nantes
+(6 JDD d'une plateforme totalement différente) sur le même nœud, sans résidu.
+
 ## Tests
 
 Zéro appel réseau — fixtures JSON enregistrées (`tests/fixtures/`).
@@ -171,5 +193,6 @@ python3 -m moissonneur_ods --help
 - v1 uniquement : seul le mode `lien`/`copie` global est supporté (pas de choix par JDD).
 - Seule l'API Explore **v2.1** est gérée (vérifiée au premier appel — erreur claire sinon).
 - La géographie n'est jamais devinée : aucun `geography` n'est injecté.
-- Généralité hors `data.rennesmetropole.fr` à confirmer sur une 2ᵉ instance ODS
-  (libellés de thème/licence, formes d'URL d'`attachments[]`).
+- Généralité confirmée sur une 2ᵉ instance ODS réelle (`data.nantesmetropole.fr`,
+  en plus de `data.rennesmetropole.fr`) — chaque nouvelle plateforme a ses propres
+  libellés de thème/licence à curer (`--conf-themes`, rapport `--dry-run`).
