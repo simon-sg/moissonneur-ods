@@ -22,6 +22,8 @@ from rudi_harvest_toolkit.publish import publier_si_configue
 from rudi_harvest_toolkit.rudi_client import (
     charger_conf_rudi,
     lister_organisations,
+    supprimer_dataset,
+    supprimer_organisation,
     toutes_metadonnees_rudi,
     url_catalog,
 )
@@ -113,6 +115,10 @@ def _ajouter_args_raccordement(parseur: argparse.ArgumentParser) -> None:
                         help="pousse les ressources du nœud vers le portail (Kalim) en direct — à lancer "
                              "après --raccorder-portail --scenario peuple, une fois le .ini appliqué et le "
                              "script SQL des organisations exécuté")
+    groupe.add_argument("--reinitialiser-noeud", action="store_true",
+                        help="supprime toutes les ressources et organisations LOCALES du nœud (jamais le "
+                             "raccordement portail) et le(s) fichier(s) d'état local — pour chaîner "
+                             "plusieurs tests bout-en-bout sur des plateformes ODS différentes sans résidu")
 
 
 def _licence_repli(nom: str):
@@ -424,6 +430,59 @@ def executer_renvoyer_ressources(args, confirmer=input) -> int:
     return 0
 
 
+def executer_reinitialisation(args, confirmer=input) -> int:
+    """Vide le contenu LOCAL du nœud (ressources + organisations) pour chaîner
+    plusieurs tests bout-en-bout sur des plateformes ODS différentes sans résidu.
+
+    Ne touche JAMAIS le raccordement portail (``conf["portail"]``) : désenregistrer
+    un nœud toucherait la base partagée ROOB (strukture_data) — un registre créé une
+    fois n'a pas besoin d'être recréé à chaque test. Seul le contenu propre au nœud
+    (son catalogue local) est supprimé, avec son/ses fichier(s) d'état local.
+    """
+    conf = charger_conf_rudi(args.rudi_conf) if args.rudi_conf else None
+    if not conf:
+        print("Configuration du nœud RUDI absente ou introuvable (--rudi-conf) — réinitialisation impossible.")
+        return 2
+
+    metadonnees = toutes_metadonnees_rudi(conf)
+    organisations = lister_organisations(conf)
+    dossier_etat = args.dossier_etat or "conf"
+    fichiers_etat = sorted(Path(dossier_etat).glob("etat_*.json"))
+
+    print(f"Nœud : {conf.get('url', '?')}")
+    print(f"  {len(metadonnees)} ressource(s) locale(s)")
+    print(f"  {len(organisations)} organisation(s) locale(s)")
+    print(f"  {len(fichiers_etat)} fichier(s) d'état local ({dossier_etat}/etat_*.json)")
+    print("  Le raccordement portail (conf['portail']), lui, n'est PAS touché.")
+    if not metadonnees and not organisations and not fichiers_etat:
+        print("\nRien à réinitialiser.")
+        return 0
+    saisie = confirmer("\nTaper 'REINITIALISER' pour confirmer (ou Entrée pour annuler) : ").strip()
+    if saisie != "REINITIALISER":
+        print("Réinitialisation annulée.")
+        return 0
+
+    echecs = 0
+    for m in metadonnees:
+        gid = m.get("global_id")
+        if gid and not supprimer_dataset(conf, gid):
+            echecs += 1
+    for org in organisations:
+        org_id = org.get("organization_id")
+        if org_id and not supprimer_organisation(conf, org_id):
+            echecs += 1
+    for fichier in fichiers_etat:
+        try:
+            fichier.unlink()
+        except OSError as e:
+            print(f"  Impossible de supprimer {fichier} : {e}")
+            echecs += 1
+
+    print(f"\nNœud réinitialisé : {len(metadonnees)} ressource(s), {len(organisations)} organisation(s), "
+          f"{len(fichiers_etat)} fichier(s) d'état supprimé(s) ({echecs} échec(s)).")
+    return 0 if echecs == 0 else 1
+
+
 def main(argv=None) -> int:
     args = construire_parseur().parse_args(argv)
     try:
@@ -431,9 +490,11 @@ def main(argv=None) -> int:
             return executer_raccordement(args)
         if args.renvoyer_ressources:
             return executer_renvoyer_ressources(args)
+        if args.reinitialiser_noeud:
+            return executer_reinitialisation(args)
         if not args.url:
             print("L'URL de la plateforme ODS est requise (--url) hors modes "
-                  "--raccorder-portail / --renvoyer-ressources.")
+                  "--raccorder-portail / --renvoyer-ressources / --reinitialiser-noeud.")
             return 2
         if args.menage:
             return executer_menage(args)
