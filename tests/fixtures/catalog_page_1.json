@@ -1,0 +1,11 @@
+{
+  "total_count": 3,
+  "results": [
+    {
+      "dataset_id": "jeu-c",
+      "metas": {"default": {"title": "Jeu C", "theme": ["Environnement"], "modified": "2025-01-03T00:00:00Z"}},
+      "attachments": [],
+      "alternative_exports": []
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "dataset_id": "inventaire-arbres",
+  "metas": {
+    "default": {
+      "title": "Inventaire des arbres",
+      "description": "Simple liste des arbres d'alignement.",
+      "theme": [],
+      "keyword": [],
+      "modified": "2024-01-01T00:00:00Z",
+      "publisher": "Rennes Métropole"
+    }
+  },
+  "attachments": [],
+  "alternative_exports": []
+}

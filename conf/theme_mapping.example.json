@@ -1,0 +1,16 @@
+{
+  "Culture, Sports, Loisirs": "culture",
+  "Aménagement, Urbanisme": "townPlanning",
+  "Environnement": "environment",
+  "Transport, Déplacements": "transportation",
+  "Logement, Habitat": "housing",
+  "Éducation, Enseignement": "education",
+  "Santé, Action sociale": "health",
+  "Économie, Emploi": "economy",
+  "Citoyenneté, Administration": "citizenship",
+  "Référentiels géographiques": "location",
+  "Population, Société": "society",
+  "Énergie, Réseaux": "energyNetworks",
+  "Enfance, Famille": "children",
+  "Espaces publics, Voirie": "publicSpace"
+}

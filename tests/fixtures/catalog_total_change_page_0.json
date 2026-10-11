@@ -1,0 +1,17 @@
+{
+  "total_count": 5,
+  "results": [
+    {
+      "dataset_id": "jeu-a",
+      "metas": {"default": {"title": "Jeu A"}},
+      "attachments": [],
+      "alternative_exports": []
+    },
+    {
+      "dataset_id": "jeu-b",
+      "metas": {"default": {"title": "Jeu B"}},
+      "attachments": [],
+      "alternative_exports": []
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "source_racine": "metas.default",
+  "champs": {
+    "titre": {"chemin": "title", "obligatoire": true},
+    "description_brute": {"chemin": "description", "defaut": ""},
+    "themes": {"chemin": "theme", "liste": true, "defaut": []},
+    "keywords": {"chemin": "keyword", "liste": true, "defaut": []},
+    "licence_label": {"chemin": "license"},
+    "licence_url": {"chemin": "license_url"},
+    "modified": {"chemin": "modified"},
+    "publisher": {"chemin": "publisher"},
+    "update_frequency": {"chemin": "update_frequency"},
+    "language": {"chemin": "language"},
+    "territory": {"chemin": "territory"},
+    "geographic_reference": {"chemin": "geographic_reference"},
+    "records_count": {"chemin": "records_count"}
+  }
+}

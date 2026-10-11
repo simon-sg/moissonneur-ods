@@ -1,0 +1,11 @@
+{
+  "total_count": 4,
+  "results": [
+    {
+      "dataset_id": "jeu-c",
+      "metas": {"default": {"title": "Jeu C"}},
+      "attachments": [],
+      "alternative_exports": []
+    }
+  ]
+}

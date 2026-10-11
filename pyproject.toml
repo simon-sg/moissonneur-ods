@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "moissonneur-ods"
+version = "0.1.0"
+description = "Moissonneur générique d'une plateforme Opendatasoft (ODS/Huwise) vers un nœud RUDI."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "requests>=2.28",
+    "rudi-harvest-toolkit @ file:///media/simon/DATA4T/Dev/rudi-harvest-toolkit",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
+[project.scripts]
+moissonneur-ods = "moissonneur_ods.cli:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+moissonneur_ods = ["translation/*.json"]

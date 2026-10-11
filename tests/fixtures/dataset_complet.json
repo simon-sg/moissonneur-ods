@@ -1,0 +1,42 @@
+{
+  "dataset_id": "frequentation-detaillee-du-musee-des-beaux-arts",
+  "metas": {
+    "default": {
+      "title": "Fréquentation détaillée du musée des Beaux-Arts",
+      "description": "<p>Ce jeu de données recense la fréquentation du musée des Beaux-Arts de Rennes.</p><ul><li>Entrées payantes</li><li>Entrées gratuites</li></ul>",
+      "theme": ["Culture, Sports, Loisirs"],
+      "keyword": ["musée", "fréquentation", "Beaux-Arts"],
+      "license": "Open Database License (ODbL)",
+      "license_url": "https://opendatacommons.org/licenses/odbl/1-0/",
+      "language": "fr",
+      "modified": "2025-03-12T09:41:37+00:00",
+      "publisher": "Ville de Rennes",
+      "records_count": 1234,
+      "update_frequency": "monthly",
+      "geographic_reference": ["fr_35"],
+      "territory": ["Rennes Métropole"]
+    }
+  },
+  "attachments": [
+    {
+      "id": "csv-2024",
+      "title": "Fréquentation 2024 (CSV)",
+      "url": "https://data.rennesmetropole.fr/api/explore/v2.1/catalog/datasets/frequentation-detaillee-du-musee-des-beaux-arts/exports/csv",
+      "mimetype": "text/csv"
+    },
+    {
+      "id": "dictionnaire",
+      "title": "Dictionnaire des variables",
+      "url": "https://data.rennesmetropole.fr/api/explore/v2.1/catalog/datasets/frequentation-detaillee-du-musee-des-beaux-arts/files/dictionnaire.pdf",
+      "mimetype": "application/pdf"
+    }
+  ],
+  "alternative_exports": [
+    {
+      "id": "geojson",
+      "title": "Export GeoJSON",
+      "url": "https://data.rennesmetropole.fr/api/explore/v2.1/catalog/datasets/frequentation-detaillee-du-musee-des-beaux-arts/exports/geojson",
+      "mimetype": "application/json"
+    }
+  ]
+}

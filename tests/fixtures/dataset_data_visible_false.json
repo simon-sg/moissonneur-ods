@@ -1,0 +1,18 @@
+{
+  "dataset_id": "indicateurs-brut-de-pompage",
+  "metas": {
+    "default": {
+      "title": "Indicateurs de pompage (non publié)",
+      "description": "",
+      "theme": ["Thème inconnu XYZ"],
+      "keyword": ["pompage"],
+      "license": "Licence bizarre 3000",
+      "license_url": "https://example.org/licence-bizarre",
+      "modified": "2023-06-01T12:00:00Z",
+      "publisher": ""
+    }
+  },
+  "data_visible": false,
+  "attachments": [],
+  "alternative_exports": []
+}

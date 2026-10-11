@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Configuration locale (ne pas versionner)
+conf/rudi_node.json
+conf/theme_mapping.json
+conf/theme_mapping_decouvertes.json
+conf/etat_*.json
+conf/telechargements/

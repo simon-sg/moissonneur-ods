@@ -1,0 +1,17 @@
+{
+  "total_count": 3,
+  "results": [
+    {
+      "dataset_id": "jeu-a",
+      "metas": {"default": {"title": "Jeu A", "theme": ["Culture, Sports, Loisirs"], "modified": "2025-01-01T00:00:00Z"}},
+      "attachments": [],
+      "alternative_exports": []
+    },
+    {
+      "dataset_id": "jeu-b",
+      "metas": {"default": {"title": "Jeu B", "theme": [], "modified": "2025-01-02T00:00:00Z"}},
+      "attachments": [],
+      "alternative_exports": []
+    }
+  ]
+}
