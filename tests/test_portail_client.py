@@ -1,0 +1,333 @@
+"""Tests unitaires de portail_client (mocks HTTP, zéro appel réseau)."""
+import base64
+import copy
+import json
+import os
+import tempfile
+import unittest
+from unittest import mock
+
+from support import FakeResponse
+
+from moissonneur_ods import portail_client
+from moissonneur_ods.portail_client import (
+    ConfigRaccordement,
+    creer_ou_trouver_noeud,
+    creer_ou_trouver_producteur,
+    generer_ini_portail,
+    generer_sql_upsert_organisations,
+    obtenir_token_admin,
+    portal_ready,
+    raccorder,
+    renvoyer_ressources,
+)
+
+
+class FakeSessionPortail:
+    """Fake session ``requests`` : route par (méthode, fragment d'URL)."""
+
+    def __init__(self, routes=None):
+        self.routes = dict(routes or {})
+        self.appels = []
+
+    def _repondre(self, methode, url, kwargs):
+        self.appels.append((methode, url, kwargs))
+        for (m, fragment), reponse in sorted(self.routes.items(), key=lambda kv: -len(kv[0][1])):
+            if m == methode and fragment in url:
+                return reponse
+        return FakeResponse(404, text=f"non mocké : {methode} {url}")
+
+    def get(self, url, **kwargs):
+        return self._repondre("GET", url, kwargs)
+
+    def post(self, url, **kwargs):
+        return self._repondre("POST", url, kwargs)
+
+
+def _cfg(**kwargs):
+    base = dict(
+        portal_url="http://portail.test",
+        admin_user="rudi",
+        admin_pass="secret",
+        provider_code="MOISS_ODS_RM",
+        provider_label="Moissonneur ODS",
+        node_catalog_url="http://172.17.0.1:3030/catalog/v1",
+        node_version="2.7.2",
+    )
+    base.update(kwargs)
+    return ConfigRaccordement(**base)
+
+
+class TestConfigRaccordement(unittest.TestCase):
+    def test_prefixe_url_derive_du_catalogue(self):
+        self.assertEqual(_cfg().node_url_prefix, "http://172.17.0.1:3030")
+
+    def test_prefixe_explicite_conserve(self):
+        self.assertEqual(_cfg(node_url_prefix="http://autre:9999").node_url_prefix, "http://autre:9999")
+
+
+class TestTokenAdmin(unittest.TestCase):
+    def test_oauth2_client_credentials(self):
+        session = FakeSessionPortail({
+            ("POST", "/oauth2/token"): FakeResponse(200, {"access_token": "tok-admin"}),
+        })
+        self.assertEqual(obtenir_token_admin(session, _cfg()), "tok-admin")
+
+    def test_repli_form_login(self):
+        session = FakeSessionPortail({
+            ("POST", "/oauth2/token"): FakeResponse(401, text="non"),
+            ("POST", "/authenticate"): FakeResponse(
+                200, {"token": "jwt-admin"}, headers={"content-type": "application/json"}),
+        })
+        self.assertEqual(obtenir_token_admin(session, _cfg()), "jwt-admin")
+
+    def test_echec_des_deux_voies_leve_erreur(self):
+        session = FakeSessionPortail({
+            ("POST", "/oauth2/token"): FakeResponse(401, text="non"),
+            ("POST", "/authenticate"): FakeResponse(401, text="non"),
+        })
+        with self.assertRaises(portail_client.ErreurRaccordement):
+            obtenir_token_admin(session, _cfg())
+
+
+class TestProducteurNoeud(unittest.TestCase):
+    def test_producteur_existant_reutilise(self):
+        session = FakeSessionPortail({
+            ("GET", "/strukture/v1/providers"): FakeResponse(
+                200, [{"code": "MOISS_ODS_RM", "uuid": "prov-1"}]),
+        })
+        self.assertEqual(creer_ou_trouver_producteur(session, "tok", _cfg()), "prov-1")
+        self.assertEqual([m for m, _, _ in session.appels], ["GET"])
+
+    def test_producteur_cree_si_absent(self):
+        session = FakeSessionPortail({
+            ("GET", "/strukture/v1/providers"): FakeResponse(200, {"elements": []}),
+            ("POST", "/strukture/v1/providers"): FakeResponse(200, {"uuid": "prov-2"}),
+        })
+        self.assertEqual(creer_ou_trouver_producteur(session, "tok", _cfg()), "prov-2")
+
+    def test_noeud_cree_toujours_non_harvestable(self):
+        session = FakeSessionPortail({
+            ("GET", "/providers/prov-1/nodes"): FakeResponse(200, []),
+            ("POST", "/providers/prov-1/nodes"): FakeResponse(200, {"uuid": "node-1"}),
+        })
+        node_uuid = creer_ou_trouver_noeud(session, "tok", "prov-1", _cfg())
+        self.assertEqual(node_uuid, "node-1")
+        payload = next(k for m, u, k in session.appels if m == "POST")["json"]
+        self.assertIs(payload["harvestable"], False)
+        self.assertIs(payload["notifiable"], True)
+        self.assertEqual(payload["url"], "http://172.17.0.1:3030/catalog/v1")
+        self.assertEqual(payload["version"], "2.7.2")
+
+    def test_noeud_existant_matche_par_prefixe(self):
+        session = FakeSessionPortail({
+            ("GET", "/providers/prov-1/nodes"): FakeResponse(200, {
+                "elements": [{"uuid": "node-9", "url": "http://172.17.0.1:3030/catalog/v1"}],
+            }),
+        })
+        self.assertEqual(creer_ou_trouver_noeud(session, "tok", "prov-1", _cfg()), "node-9")
+        self.assertEqual([m for m, _, _ in session.appels], ["GET"])
+
+    def test_echec_creation_noeud_leve_erreur(self):
+        session = FakeSessionPortail({
+            ("GET", "/providers/prov-1/nodes"): FakeResponse(200, []),
+            ("POST", "/providers/prov-1/nodes"): FakeResponse(500, text="boom"),
+        })
+        with self.assertRaises(portail_client.ErreurRaccordement):
+            creer_ou_trouver_noeud(session, "tok", "prov-1", _cfg())
+
+
+class TestRaccorder(unittest.TestCase):
+    @staticmethod
+    def _routes(compte_existe=False, node_uuid="node-1"):
+        users = [{"login": node_uuid}] if compte_existe else []
+        return {
+            ("POST", "/oauth2/token"): FakeResponse(200, {"access_token": "admin-tok"}),
+            ("GET", "/providers/prov-1/nodes"): FakeResponse(200, []),
+            ("POST", "/providers/prov-1/nodes"): FakeResponse(200, {"uuid": node_uuid}),
+            ("GET", "/strukture/v1/providers"): FakeResponse(
+                200, [{"code": "MOISS_ODS_RM", "uuid": "prov-1"}]),
+            ("GET", "/acl/v1/users?login="): FakeResponse(200, {"elements": users}),
+            ("GET", "/acl/v1/roles"): FakeResponse(200, [{"code": "PROVIDER", "uuid": "role-1"}]),
+            ("POST", "/acl/v1/users"): FakeResponse(201, {}),
+        }
+
+    def test_succes_ecrit_credentials_et_retourne_uuids(self):
+        fake = FakeSessionPortail(self._routes())
+        with tempfile.TemporaryDirectory() as d:
+            chemin = os.path.join(d, "credentials_portail.json")
+            with mock.patch.object(portail_client.requests, "Session", return_value=fake), \
+                 mock.patch.object(portail_client.requests, "post",
+                                   return_value=FakeResponse(200, {"access_token": "node-tok"})):
+                creds = raccorder(_cfg(credentials_path=chemin))
+            self.assertEqual(creds["provider_uuid"], "prov-1")
+            self.assertEqual(creds["node_uuid"], "node-1")
+            self.assertTrue(os.path.isfile(chemin))
+            self.assertEqual(os.stat(chemin).st_mode & 0o777, 0o600)
+            self.assertEqual(json.loads(open(chemin).read())["provider_uuid"], "prov-1")
+
+    def test_echec_token_noeud_n_ecrit_pas_les_credentials(self):
+        fake = FakeSessionPortail(self._routes())
+        with tempfile.TemporaryDirectory() as d:
+            chemin = os.path.join(d, "credentials_portail.json")
+            with mock.patch.object(portail_client.requests, "Session", return_value=fake), \
+                 mock.patch.object(portail_client.requests, "post",
+                                   return_value=FakeResponse(401, text="bad credentials")):
+                with self.assertRaises(portail_client.ErreurRaccordement):
+                    raccorder(_cfg(credentials_path=chemin))
+            self.assertFalse(os.path.exists(chemin))
+
+    def test_compte_robot_existant_reutilise_mot_de_passe(self):
+        fake = FakeSessionPortail(self._routes(compte_existe=True))
+        with tempfile.TemporaryDirectory() as d:
+            with mock.patch.object(portail_client.requests, "Session", return_value=fake), \
+                 mock.patch.object(portail_client.requests, "post",
+                                   return_value=FakeResponse(200, {"access_token": "node-tok"})):
+                creds = raccorder(_cfg(credentials_path=os.path.join(d, "c.json")),
+                                  credentials_existants={"node_password": "ancien"})
+        self.assertEqual(creds["node_password"], "ancien")
+        self.assertEqual([u for m, u, _ in fake.appels if m == "POST" and u.endswith("/acl/v1/users")], [])
+
+
+class TestIniPortail(unittest.TestCase):
+    def test_format_et_permissions(self):
+        creds = {"portal_url": "http://rudi.localhost", "node_uuid": "node-1",
+                 "node_password": "p@s s"}
+        with tempfile.TemporaryDirectory() as d:
+            chemin = os.path.join(d, "rudi-catalog-portal.ini")
+            generer_ini_portail(chemin, creds)
+            contenu = open(chemin).read()
+            self.assertEqual(os.stat(chemin).st_mode & 0o777, 0o600)
+        self.assertIn("[portal]", contenu)
+        self.assertIn('portal_url = "http://rudi.localhost"', contenu)
+        self.assertIn('login = "node-1"', contenu)
+        self.assertIn("portal_req_timeout = 60000", contenu)
+        self.assertIn("is_pwd_b64 = true", contenu)
+        attendu = base64.b64encode(b"p@s s").decode()
+        self.assertIn(f'passw = "{attendu}"', contenu)
+
+
+class TestGenererSqlUpsertOrganisations(unittest.TestCase):
+    _CONF = {"url": "http://localhost:3032",
+             "portail": {"mode": "portail", "node_uuid": "node-abc"}}
+
+    def _generer(self, orgs):
+        with mock.patch.object(portail_client, "lister_organisations", return_value=orgs):
+            with tempfile.TemporaryDirectory() as d:
+                chemin = os.path.join(d, "upsert.sql")
+                nb = generer_sql_upsert_organisations(self._CONF, "prov-xyz", chemin)
+                return nb, open(chemin).read()
+
+    def test_genere_organization_et_linked_producer(self):
+        orgs = [
+            {"organization_id": "org-1", "organization_name": "Rennes Métropole",
+             "organization_summary": "Collectivité"},
+            {"organization_id": "org-2", "organization_name": "L'ARCEP",
+             "organization_caption": "Régulateur"},
+        ]
+        nb, sql = self._generer(orgs)
+        self.assertEqual(nb, 2)
+        self.assertIn("INSERT INTO strukture_data.organization (uuid, name, description, opening_date)", sql)
+        self.assertIn("ON CONFLICT (uuid) DO UPDATE SET name = EXCLUDED.name", sql)
+        self.assertIn("'Rennes Métropole'", sql)
+        self.assertIn("'L''ARCEP'", sql)
+        self.assertIn("INSERT INTO strukture_data.linked_producer", sql)
+        self.assertIn("'COMPLETED', 'VALIDATED'", sql)
+        self.assertIn("'Lien créé'", sql)
+        self.assertIn("'linked-producer-process'", sql)
+        self.assertIn("'node-abc'", sql)
+        self.assertIn("ON CONFLICT (organization_fk, provider_fk) DO NOTHING", sql)
+        self.assertIn("BEGIN;", sql)
+        self.assertIn("COMMIT;", sql)
+        # ni les colonnes supprimées par V8, ni un UPDATE de statut workflow
+        self.assertNotIn("order_", sql)
+        self.assertIn("uuid, name, description, opening_date", sql)
+
+    def test_organization_sans_uuid_ignoree(self):
+        nb, sql = self._generer([{"organization_name": "Sans identifiant"}])
+        self.assertEqual(nb, 0)
+        self.assertIn("Organisation ignorée", sql)
+
+    def test_refuse_sans_node_uuid_dans_la_conf(self):
+        with mock.patch.object(portail_client, "lister_organisations", return_value=[]):
+            with tempfile.TemporaryDirectory() as d:
+                with self.assertRaises(ValueError):
+                    generer_sql_upsert_organisations({}, "prov-xyz", os.path.join(d, "u.sql"))
+
+
+class TestPortalReady(unittest.TestCase):
+    def test_dedoublonne_et_corrige_connecteurs_geo(self):
+        out = portal_ready(copy.deepcopy(self._fiche()))
+        self.assertEqual(out["metadata_info"]["api_version"], "1.4.1")
+        self.assertEqual(len(out["available_formats"]), 1)
+        self.assertEqual(out["available_formats"][0]["connector"]["connector_parameters"],
+                         [{"key": "versions", "value": "2.0.0"}])
+        self.assertNotIn("metadata_status", out)
+        self.assertNotIn("restricted_access", out)
+
+    @staticmethod
+    def _fiche():
+        return {
+            "metadata_info": {"metadata_dates": {"published": "x"}},
+            "metadata_status": "published",
+            "restricted_access": True,
+            "available_formats": [
+                {"media_id": "m1", "media_type": "SERVICE",
+                 "connector": {"interface_contract": "wfs", "connector_parameters": []}},
+                {"media_id": "m1", "media_type": "SERVICE",
+                 "connector": {"interface_contract": "wfs", "connector_parameters": []}},
+            ],
+        }
+
+
+class TestRenvoyerRessources(unittest.TestCase):
+    def test_post_et_put_selon_presence_portail(self):
+        appels = []
+
+        def fake_requete(url, methode="GET", corps=None, entetes=None, brut=None, timeout=60):
+            appels.append((methode, url, corps))
+            if url.endswith("/oauth2/token"):
+                return 200, json.dumps({"access_token": "tok"})
+            if url.endswith("/resources/g1"):
+                return 200, json.dumps({"resource_title": "T1",
+                                        "metadata_info": {"metadata_dates": {}},
+                                        "metadata_status": "published", "available_formats": []})
+            if "/datasets/g1/metadatas" in url:
+                return 404, ""
+            if url.endswith("/resources/g2"):
+                return 200, json.dumps({"resource_title": "T2",
+                                        "metadata_info": {"metadata_dates": {}},
+                                        "metadata_status": "published", "available_formats": []})
+            if "/datasets/g2/metadatas" in url:
+                return 200, "{}"
+            if url.endswith("/kalim/v1/resources"):
+                return 200, ""
+            raise AssertionError(f"appel inattendu : {methode} {url}")
+
+        creds = {"portal_url": "http://portail.test", "node_uuid": "node-1",
+                 "node_login": "node-1", "node_password": "pw"}
+        metas = [{"global_id": "g1"}, {"global_id": "g2"}]
+        with mock.patch.object(portail_client, "_requete", side_effect=fake_requete), \
+             mock.patch.object(portail_client, "url_catalog",
+                               return_value="http://node:3030/catalog"), \
+             mock.patch.object(portail_client.time, "sleep"):
+            bilan = renvoyer_ressources(creds, {"url": "http://node:3032"}, metas)
+
+        self.assertEqual(bilan, {"POST": 1, "PUT": 1, "echec": 0})
+        methodes = [m for m, u, _ in appels if u.endswith("/kalim/v1/resources")]
+        self.assertEqual(methodes, ["POST", "PUT"])
+        corps_post = next(c for m, u, c in appels
+                          if u.endswith("/kalim/v1/resources") and m == "POST")
+        self.assertEqual(corps_post["metadata_info"]["api_version"], "1.4.1")
+        self.assertNotIn("metadata_status", corps_post)
+
+    def test_aucune_ressource_leve_erreur(self):
+        creds = {"portal_url": "http://portail.test", "node_uuid": "n",
+                 "node_login": "n", "node_password": "pw"}
+        with mock.patch.object(portail_client, "url_catalog", return_value="http://node:3030/catalog"):
+            with self.assertRaises(portail_client.ErreurRaccordement):
+                renvoyer_ressources(creds, {"url": "http://node:3032"}, [])
+
+
+if __name__ == "__main__":
+    unittest.main()
