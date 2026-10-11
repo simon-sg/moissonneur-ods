@@ -37,7 +37,6 @@ from .portail_client import (
     ConfigRaccordement,
     ErreurRaccordement,
     generer_ini_portail,
-    generer_sql_upsert_organisations,
     raccorder,
     renvoyer_ressources,
 )
@@ -93,7 +92,8 @@ def _ajouter_args_raccordement(parseur: argparse.ArgumentParser) -> None:
                              "(jamais combiné à une moisson normale)")
     groupe.add_argument("--scenario", choices=["neuf", "peuple"], default=None,
                         help="neuf : nœud vide avant tout harvest ; peuple : nœud déjà peuplé "
-                             "(rattrapage SQL des organisations + --renvoyer-ressources)")
+                             "(lancer --renvoyer-ressources après, les organisations manquantes "
+                             "sont créées automatiquement par Kalim, à valider dans l'UI du portail)")
     groupe.add_argument("--portail-url", default=None,
                         help="URL du portail ROOB (ex. http://rudi.localhost)")
     groupe.add_argument("--provider-code", default=None,
@@ -362,26 +362,18 @@ def executer_raccordement(args, confirmer=input) -> int:
     if args.scenario == "peuple":
         organisations = lister_organisations(conf)
         print(f"\n{len(organisations)} organisation(s) présente(s) sur le nœud local.")
-        saisie = confirmer(
-            "\nGénérer le script SQL d'upsert de ces organisations vers le schéma partagé "
-            "strukture_data du portail ?\n"
-            "  Tapez 'GENERER SQL' pour confirmer (ou Entrée pour annuler) : "
-        ).strip()
-        if saisie != "GENERER SQL":
-            print("Génération SQL annulée.")
-        else:
-            timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
-            chemin_sql = _chemin_conf(args, f"upsert_organisations_{timestamp}.sql")
-            nb = generer_sql_upsert_organisations(conf, creds["provider_uuid"], chemin_sql)
-            print(f"\nScript SQL généré : {chemin_sql} ({nb} organisation(s)).")
-            print("  ⚠️  Il cible le schéma partagé de l'infra ROOB (strukture_data).")
-            print("      À relire, puis à exécuter manuellement — jamais par moissonneur-ods.")
+        print("  Aucune création en base n'est nécessaire ici : une fois les ressources "
+              "poussées (--renvoyer-ressources ci-dessous), Kalim crée automatiquement "
+              "chaque organisation manquante avec le bon uuid, en attente de validation "
+              "dans l'UI Strukture du portail — c'est cette validation humaine qui "
+              "débloque la publication complète des JDD concernés.")
 
     _afficher_instructions_ini(chemin_ini)
     if args.scenario == "peuple":
-        print("\nAprès application du .ini, redémarrage du conteneur nœud et exécution du script SQL :")
+        print("\nAprès application du .ini et redémarrage du conteneur nœud :")
         print(f"  python3 -m moissonneur_ods --rudi-conf {args.rudi_conf} --renvoyer-ressources")
         print("  pour pousser vers le portail les ressources déjà publiées avant le raccordement.")
+        print("  Puis valider dans l'UI Strukture du portail les organisations nouvellement créées.")
     return 0
 
 

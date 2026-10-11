@@ -20,16 +20,26 @@ script de référence, toutes documentées dans le plan de raccordement
 - Le fichier de credentials n'est jamais écrit avant que ``tester_token_noeud``
   n'ait validé que le compte ROBOT peut obtenir un token.
 
-Le module embarque aussi les deux étapes du scénario « nœud déjà peuplé » :
-- ``generer_sql_upsert_organisations`` : rattrapage des organisations par
-  génération d'un script SQL destiné au schéma partagé ``strukture_data`` du
-  portail — jamais exécuté par l'outil, car l'API ``POST /strukture/v1/
-  organizations`` ignore l'uuid imposé (RAPPORT_BUGS_RUDI.md, bug C2).
-- ``renvoyer_ressources`` : adaptation de
-  ``rudi-portal-local/raccordement/repousser_metadonnees.py`` — pousse toutes les
-  ressources du nœud directement vers Kalim, contournant le pull cassé (bug A1),
-  le renvoi natif du nœud silencieusement skippé (bug D1) et l'envoi en masse
-  auto-saturant de ``/catalog/admin/portal/resources/send`` (bug D2).
+Le module embarque aussi ``renvoyer_ressources`` pour le scénario « nœud déjà
+peuplé » : adaptation de
+``rudi-portal-local/raccordement/repousser_metadonnees.py`` — pousse toutes les
+ressources du nœud directement vers Kalim, contournant le pull cassé (bug A1),
+le renvoi natif du nœud silencieusement skippé (bug D1) et l'envoi en masse
+auto-saturant de ``/catalog/admin/portal/resources/send`` (bug D2).
+
+**Procédure normale de validation des organisations (confirmée en conditions
+réelles le 2026-10-11)** : quand une ressource est poussée vers
+``{portail}/kalim/v1/resources`` avec un ``producer.organization_id`` inconnu
+côté portail, Kalim crée l'organisation correspondante **avec le bon uuid**
+(mécanisme distinct de l'API admin ``POST /strukture/v1/organizations``, qui
+ignore l'uuid imposé — bug C2 — mais qui n'est pas celle utilisée ici). Elle
+apparaît côté portail en attente de validation humaine dans l'UI Strukture ;
+une fois validée, les ressources qui la référencent peuvent être pleinement
+publiées. Aucune création d'organisation en SQL direct n'est donc nécessaire
+ni souhaitable : ça contournerait la validation humaine que cette procédure
+préserve intentionnellement. ``renvoyer_ressources`` suffit à déclencher la
+création (en attente) de toutes les organisations manquantes pour un nœud
+déjà peuplé — à l'utilisateur de les valider ensuite dans l'UI du portail.
 """
 from __future__ import annotations
 
@@ -39,7 +49,6 @@ import secrets
 import time
 import urllib.error
 import urllib.request
-import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -358,112 +367,13 @@ def generer_ini_portail(chemin: str, credentials: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Rattrapage des organisations d'un nœud déjà peuplé (--scenario peuple)
-# ---------------------------------------------------------------------------
-
-def _echapper_sql(valeur: str) -> str:
-    """Échappement SQL minimal d'un champ texte (doublage des apostrophes)."""
-    return (valeur or "").replace("'", "''")
-
-
-def _commentaire_sql(valeur: str) -> str:
-    """Neutralise les retours à la ligne d'une valeur avant usage en commentaire ``--``."""
-    return (valeur or "").replace("\r", " ").replace("\n", " ")
-
-
-def generer_sql_upsert_organisations(conf_rudi: dict, provider_uuid: str, chemin_sortie: str) -> int:
-    """Génère un script SQL d'upsert des organisations vers ``strukture_data``.
-
-    Schéma réel (migrations Flyway de Strukture, V7→V15) — l'upsert touche :
-    - ``organization`` : ``uuid`` (contrainte unique ``organization_uk`` posée par
-      V8), ``name`` (V8 renomme ``label`` en ``name`` et supprime ``code``/``order_``),
-      ``description`` (ajoutée V9, rendue NOT NULL sans défaut par V12),
-      ``opening_date`` (NOT NULL). Les colonnes de workflow de V12
-      (``organization_status``/``status``/``functional_status``/``initiator``/
-      ``process_definition_key``) sont laissées sur leurs ``DEFAULT`` et jamais
-      touchées par un ``UPDATE`` — elles sont gérées par le portail.
-    - ``linked_producer`` (V13) : colonnes ``NOT NULL`` **sans défaut** toutes
-      fournies explicitement ; contrainte unique ``(organization_fk, provider_fk)``
-      posée par V15. Valeurs alignées sur celles du workflow applicatif
-      (``LinkedProducerHelper``/``LinkedProducerServiceImpl``) pour un lien
-      immédiatement utilisable : ``status='COMPLETED'``,
-      ``linked_producer_status='VALIDATED'``, ``functional_status='Lien créé'``,
-      ``process_definition_key='linked-producer-process'``,
-      ``initiator=node_uuid``.
-
-    Ne lit **que** le nœud local — zéro connexion au portail ou à sa base depuis
-    moissonneur-ods. Le fichier n'est jamais exécuté par l'outil : il cible le
-    schéma partagé de l'infra ROOB et doit être relu puis exécuté manuellement.
-    Retourne le nombre d'organisations écrites dans le script.
-    """
-    node_uuid = (conf_rudi.get("portail") or {}).get("node_uuid", "")
-    if not node_uuid:
-        raise ValueError(
-            "conf_rudi['portail']['node_uuid'] absent — le SQL d'upsert doit être généré après "
-            "l'étape de raccordement (--raccorder-portail), qui enregistre le nœud dans la conf."
-        )
-    organisations = lister_organisations(conf_rudi)
-    date_gen = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-    lignes = [
-        "-- Script d'upsert des organisations vers strukture_data (schéma partagé ROOB)",
-        f"-- Nœud source           : {_commentaire_sql(conf_rudi.get('url', '?'))}",
-        f"-- Producteur cible      : {provider_uuid}",
-        f"-- Date de génération    : {date_gen}",
-        f"-- Nombre d'organisations : {len(organisations)}",
-        "--",
-        "-- ⚠️  Ce script cible le schéma partagé de l'infra ROOB (strukture_data).",
-        "--     Vérifier la base cible avant exécution. À exécuter manuellement hors",
-        "--     de moissonneur-ods (l'outil ne l'exécute jamais).",
-        "--",
-        "-- Colonnes de workflow organisées par les DEFAULT de V12 (VALIDATED/COMPLETED/",
-        "-- Acceptée/''/''), non spécifiées ici ; jamais touchées par les UPDATE.",
-        "",
-        "BEGIN;",
-        "",
-    ]
-
-    nb = 0
-    for org in organisations:
-        org_uuid = org.get("organization_id") or ""
-        nom_source = org.get("organization_name") or ""
-        if not org_uuid or not nom_source:
-            lignes += ["-- Organisation ignorée (organization_id ou name manquant) : "
-                       + _commentaire_sql(json.dumps(org, ensure_ascii=False)), ""]
-            continue
-        nom = _echapper_sql(nom_source)
-        description = _echapper_sql(org.get("organization_summary") or org.get("organization_caption") or "")
-        lp_description = _echapper_sql(
-            f"Rattachement de l'organisation '{nom_source}' au provider '{provider_uuid}'"
-        )
-        lien_uuid = str(uuid.uuid4())
-        lignes += [
-            f"-- Organisation: {_commentaire_sql(nom_source)}",
-            "INSERT INTO strukture_data.organization (uuid, name, description, opening_date)",
-            f"VALUES ('{org_uuid}', '{nom}', '{description}', now())",
-            "ON CONFLICT (uuid) DO UPDATE SET name = EXCLUDED.name, description = EXCLUDED.description;",
-            "",
-            "INSERT INTO strukture_data.linked_producer",
-            "    (uuid, creation_date, description, functional_status, initiator,",
-            "     process_definition_key, status, linked_producer_status, organization_fk, provider_fk)",
-            "VALUES",
-            f"    ('{lien_uuid}', now(), '{lp_description}', 'Lien créé', '{node_uuid}', 'linked-producer-process',",
-            "     'COMPLETED', 'VALIDATED',",
-            f"     (SELECT id FROM strukture_data.organization WHERE uuid = '{org_uuid}'),",
-            f"     (SELECT id FROM strukture_data.provider WHERE uuid = '{provider_uuid}'))",
-            "ON CONFLICT (organization_fk, provider_fk) DO NOTHING;",
-            "",
-        ]
-        nb += 1
-
-    lignes += ["COMMIT;", ""]
-    chemin = Path(chemin_sortie)
-    chemin.parent.mkdir(parents=True, exist_ok=True)
-    chemin.write_text("\n".join(lignes))
-    return nb
-
-
-# ---------------------------------------------------------------------------
 # Renvoi des ressources vers le portail (--renvoyer-ressources)
+#
+# Pour un nœud déjà peuplé, c'est la SEULE étape nécessaire pour les
+# organisations : Kalim les crée automatiquement (bon uuid) à partir du
+# `producer.organization_id` embarqué dans chaque ressource poussée, en
+# attente de validation humaine dans l'UI Strukture du portail — voir la
+# procédure documentée en tête de ce module. Aucune génération SQL.
 # ---------------------------------------------------------------------------
 
 def _requete(url, methode="GET", corps=None, entetes=None, brut=None, timeout=60):

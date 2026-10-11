@@ -15,7 +15,6 @@ from moissonneur_ods.portail_client import (
     creer_ou_trouver_noeud,
     creer_ou_trouver_producteur,
     generer_ini_portail,
-    generer_sql_upsert_organisations,
     obtenir_token_admin,
     portal_ready,
     raccorder,
@@ -205,54 +204,6 @@ class TestIniPortail(unittest.TestCase):
         self.assertIn("is_pwd_b64 = true", contenu)
         attendu = base64.b64encode(b"p@s s").decode()
         self.assertIn(f'passw = "{attendu}"', contenu)
-
-
-class TestGenererSqlUpsertOrganisations(unittest.TestCase):
-    _CONF = {"url": "http://localhost:3032",
-             "portail": {"mode": "portail", "node_uuid": "node-abc"}}
-
-    def _generer(self, orgs):
-        with mock.patch.object(portail_client, "lister_organisations", return_value=orgs):
-            with tempfile.TemporaryDirectory() as d:
-                chemin = os.path.join(d, "upsert.sql")
-                nb = generer_sql_upsert_organisations(self._CONF, "prov-xyz", chemin)
-                return nb, open(chemin).read()
-
-    def test_genere_organization_et_linked_producer(self):
-        orgs = [
-            {"organization_id": "org-1", "organization_name": "Rennes Métropole",
-             "organization_summary": "Collectivité"},
-            {"organization_id": "org-2", "organization_name": "L'ARCEP",
-             "organization_caption": "Régulateur"},
-        ]
-        nb, sql = self._generer(orgs)
-        self.assertEqual(nb, 2)
-        self.assertIn("INSERT INTO strukture_data.organization (uuid, name, description, opening_date)", sql)
-        self.assertIn("ON CONFLICT (uuid) DO UPDATE SET name = EXCLUDED.name", sql)
-        self.assertIn("'Rennes Métropole'", sql)
-        self.assertIn("'L''ARCEP'", sql)
-        self.assertIn("INSERT INTO strukture_data.linked_producer", sql)
-        self.assertIn("'COMPLETED', 'VALIDATED'", sql)
-        self.assertIn("'Lien créé'", sql)
-        self.assertIn("'linked-producer-process'", sql)
-        self.assertIn("'node-abc'", sql)
-        self.assertIn("ON CONFLICT (organization_fk, provider_fk) DO NOTHING", sql)
-        self.assertIn("BEGIN;", sql)
-        self.assertIn("COMMIT;", sql)
-        # ni les colonnes supprimées par V8, ni un UPDATE de statut workflow
-        self.assertNotIn("order_", sql)
-        self.assertIn("uuid, name, description, opening_date", sql)
-
-    def test_organization_sans_uuid_ignoree(self):
-        nb, sql = self._generer([{"organization_name": "Sans identifiant"}])
-        self.assertEqual(nb, 0)
-        self.assertIn("Organisation ignorée", sql)
-
-    def test_refuse_sans_node_uuid_dans_la_conf(self):
-        with mock.patch.object(portail_client, "lister_organisations", return_value=[]):
-            with tempfile.TemporaryDirectory() as d:
-                with self.assertRaises(ValueError):
-                    generer_sql_upsert_organisations({}, "prov-xyz", os.path.join(d, "u.sql"))
 
 
 class TestPortalReady(unittest.TestCase):
