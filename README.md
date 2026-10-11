@@ -100,13 +100,13 @@ Deux scénarios, explicites (jamais devinés) :
 | Scénario | Pour un nœud… | Effets |
 |---|---|---|
 | `neuf` | vide (0 ressource, vérifié) | producteur + nœud + compte ROBOT + `.ini` |
-| `peuple` | déjà peuplé avant le raccordement | idem, **plus** le rattrapage des organisations (script SQL) et le renvoi des ressources existantes |
+| `peuple` | déjà peuplé avant le raccordement | idem, **plus** un rappel d'enchaîner avec `--renvoyer-ressources` |
 
 `--node-catalog-url` doit finir exactement par `/catalog/v1` (jamais `/api/v1`, qui
 répond 308). Par défaut il est dérivé de `url_catalog` de la conf nœud.
 
 L'outil s'arrête **avant toute action** sur confirmation textuelle : `RACCORDER`,
-puis `GENERER SQL` (scénario `peuple`) et `RENVOYER`.
+puis `RENVOYER` pour `--renvoyer-ressources`.
 
 Artefacts générés (dans le répertoire de `--rudi-conf`, gitignored) :
 
@@ -120,13 +120,7 @@ Artefacts générés (dans le répertoire de `--rudi-conf`, gitignored) :
   # puis (re)démarrer avec -e PORTAL_CONF=/data/conf/rudi-catalog-portal.ini
   ```
 
-- `conf/upsert_organisations_<timestamp>.sql` (`peuple` uniquement) — upsert des
-  organisations vers le schéma partagé `strukture_data` du portail. **Jamais exécuté
-  par l'outil** : à relire puis exécuter manuellement (l'API
-  `POST /strukture/v1/organizations` ignore l'`uuid` imposé, bug C2 du rapport).
-
-Une fois le `.ini` appliqué, le conteneur nœud redémarré et le SQL exécuté
-(scénario `peuple`) :
+Une fois le `.ini` appliqué et le conteneur nœud redémarré (scénario `peuple`) :
 
 ```bash
 python3 -m moissonneur_ods --rudi-conf conf/rudi_node.json --renvoyer-ressources
@@ -136,6 +130,16 @@ python3 -m moissonneur_ods --rudi-conf conf/rudi_node.json --renvoyer-ressources
 (`{portail}/kalim/v1/resources`, POST ou PUT selon présence déjà au catalogue), avec
 le compte ROBOT du nœud — jamais via l'endpoint nœud
 `/catalog/admin/portal/resources/send` (auth incompatible + auto-saturant, bug D2).
+
+**Les organisations référencées (`producer.organization_id`) n'ont besoin d'aucune
+action manuelle en base** : confirmé en conditions réelles le 2026-10-11, quand Kalim
+reçoit une ressource dont l'organisation est inconnue côté portail, il la crée
+automatiquement **avec le bon uuid** — un mécanisme différent de l'API admin
+`POST /strukture/v1/organizations` (qui, elle, ignore l'uuid imposé, bug C2 du
+rapport). L'organisation apparaît en attente de validation dans l'UI Strukture du
+portail ; **c'est à vous de la valider** — c'est le geste humain que cette
+procédure préserve volontairement, pas un oubli de l'outil. Une fois validée, les
+ressources qui la référencent peuvent être pleinement publiées.
 
 Notes : le nœud est déclaré `harvestable=false` (le pull Kalim est bloquant sans
 contournement, bug A1) ; `notifiable=true` reste requis pour que le nœud puisse
