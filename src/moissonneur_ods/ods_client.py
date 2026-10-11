@@ -128,11 +128,11 @@ def lister_datasets(url_plateforme: str, taille_page: int = 100, *,
                 deja_vus.add(cle)
             nb_emis += 1
             yield ds
+            if taille_max is not None and nb_emis >= taille_max:
+                return
 
         offset += len(resultats)
         if total_annonce is not None and offset >= total_annonce:
-            return
-        if taille_max is not None and nb_emis >= taille_max:
             return
 
 
