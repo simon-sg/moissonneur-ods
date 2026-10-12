@@ -37,8 +37,19 @@ de lourd) et `--menage` (suppression des orphelins, voir plus bas).
 
 | Mode | Comportement | Médias RUDI |
 |---|---|---|
-| `--mode=lien` (défaut) | chaque pièce jointe / export alternatif ODS devient un lien direct, **aucun téléchargement** | `SERVICE` vers l'URL ODS |
-| `--mode=copie` | téléchargement local (garde-fou de taille `--taille-max-mo`, repli automatique en `SERVICE` si trop gros) puis upload | `FILE` via `publier_dataset()` |
+| `--mode=lien` (défaut) | lit chaque pièce jointe / export ODS **une fois en flux** (SHA-256 + taille, jamais écrit sur disque) pour obtenir un vrai bouton télécharger côté portail, sans jamais stocker la donnée chez nous | `FILE` hybride (`connector.url` reste l'URL ODS distante) |
+| `--mode=copie` | téléchargement local (garde-fou de taille `--taille-max-mo`, repli automatique en `SERVICE` si trop gros) puis upload | `FILE` via `publier_dataset()` (stocké sur notre nœud) |
+
+**Pourquoi un FILE "hybride" en mode lien** (analyse du 2026-10-12) : un média
+`SERVICE` n'affiche jamais de bouton télécharger côté portail — son URL reste du
+texte brut non cliquable (`rudi-portal-source`, `data-set-infos.component.html`).
+Seul `media_type: FILE` le permet, et le nœud exige un vrai `checksum`/`file_size`
+calculés sur les octets réels — d'où la lecture en flux. **Compromis accepté** :
+le checksum peut devenir obsolète si la donnée ODS change après la moisson sans
+nouveau run (RUDI ne le recalculera jamais lui-même). Repli automatique en
+`SERVICE` simple (comportement d'avant, pas de bouton) si le type MIME n'est pas
+dans l'énumération fermée du nœud ou si la lecture échoue/dépasse
+`--taille-max-mo` — jamais d'échec de run pour ça.
 
 Un JDD avec `data_visible: false` **ou** sans aucune pièce jointe/export retombe en
 métadonnées-seules (`SERVICE` vers la fiche ODS), quel que soit le mode — jamais le run

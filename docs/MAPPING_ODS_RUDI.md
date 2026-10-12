@@ -55,9 +55,14 @@ La traduction lit trois emplacements du JDD ODS :
    `--licence-repli` (sinon la valeur par défaut d'Etalab du pivot reste appliquée,
    signalée en avertissement et dans le rapport `--dry-run`).
 3. **Médias** : chaque entrée `attachments[]`/`alternative_exports[]` devient un média.
-   Mode `lien` → `SERVICE` vers l'URL ODS. Mode `copie` → téléchargement (garde-fou de
-   taille `--taille-max-mo`, repli automatique en `SERVICE` si trop gros/échec) puis
-   `FILE`. Un JDD `data_visible: false` ou sans pièce jointe/export retombe en
+   Mode `lien` → `FILE` **hybride** : empreinte (SHA-256) + taille calculées en lisant
+   le fichier une fois en flux (jamais écrit sur disque, jamais stocké chez nous),
+   `connector.url` reste l'URL ODS distante — donne un vrai bouton télécharger côté
+   portail (réservé à `media_type: FILE`), repli en `SERVICE` simple si le type MIME
+   n'est pas accepté par le nœud ou si la lecture échoue/dépasse `--taille-max-mo`.
+   Mode `copie` → téléchargement (garde-fou de taille `--taille-max-mo`, repli
+   automatique en `SERVICE` si trop gros/échec) puis `FILE` stocké sur notre nœud. Un
+   JDD `data_visible: false` ou sans pièce jointe/export retombe en
    **métadonnées-seules** (`source-metadata` vers la fiche ODS), quel que soit le mode.
    **Repli exports standards** (analyse du 2026-10-12, vérifiée sur plusieurs vraies
    plateformes ODS) : `alternative_exports[]` est vide dans la quasi-totalité des cas
