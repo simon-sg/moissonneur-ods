@@ -15,9 +15,10 @@ La traduction lit trois emplacements du JDD ODS :
 | Emplacement ODS | Rôle |
 |---|---|
 | `metas.default` | métadonnées descriptives (titre, description, thème, licence, dates…) |
-| `attachments[]` | pièces jointes (URL, titre, mimetype) |
-| `alternative_exports[]` | exports alternatifs (URL, titre, mimetype) |
+| `attachments[]` | pièces jointes (URL, titre, mimetype) — curaté par le producteur, vide dans la quasi-totalité des cas réels |
+| `alternative_exports[]` | exports alternatifs (URL, titre, mimetype) — idem, curaté et vide en pratique |
 | `dataset_id` | identifiant du JDD sur la plateforme (racine de la fiche) |
+| `has_records` / `features[]` | utilisés pour le repli vers les exports standards ODS (`/exports/{format}`) quand `alternative_exports` est vide — voir règle d'arbitrage 3 |
 
 ## Tableau de correspondance
 
@@ -58,6 +59,18 @@ La traduction lit trois emplacements du JDD ODS :
    taille `--taille-max-mo`, repli automatique en `SERVICE` si trop gros/échec) puis
    `FILE`. Un JDD `data_visible: false` ou sans pièce jointe/export retombe en
    **métadonnées-seules** (`source-metadata` vers la fiche ODS), quel que soit le mode.
+   **Repli exports standards** (analyse du 2026-10-12, vérifiée sur plusieurs vraies
+   plateformes ODS) : `alternative_exports[]` est vide dans la quasi-totalité des cas
+   réels (c'est un champ curaté par le producteur, pas la représentation standard du
+   JDD). Sans ce repli, le seul média produit était le générique `source-data`/
+   `source-metadata` du pivot — un lien vers la page explore HTML, pas un fichier,
+   sans bouton télécharger possible. L'API Explore v2.1 expose pourtant
+   systématiquement, pour tout JDD avec des enregistrements (`has_records`), un
+   export déjà servi comme un vrai fichier plat (`Content-Disposition: attachment`,
+   `Content-Type` correct — vérifié directement) : `/api/explore/v2.1/catalog/
+   datasets/{dataset_id}/exports/{format}`. Quand `alternative_exports` est vide,
+   `entrees_donnees()` retombe sur cet export : toujours CSV, + GeoJSON si le JDD a
+   une composante géographique (`features` contient `"geo"`).
 4. **Incrémental** : `modified` est le marqueur de changement (via
    `rudi_harvest_toolkit.state.dataset_a_change`) ; un JDD inchangé est sauté.
 5. **Orphelins** : le périmètre du moissonneur est `collection_tag=moissonneur-ods:<plateforme>`
