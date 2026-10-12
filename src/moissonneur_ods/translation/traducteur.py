@@ -18,6 +18,7 @@ from urllib.parse import urlparse
 from rudi_harvest_toolkit.pivot import construire_rudi_metadata
 
 from ..mode import MODE_LIEN, construire_medias, url_fiche_ods
+from .frequences import resoudre_update_frequency
 from .licences import resoudre_licence
 from .themes import THEME_REPLI, choisir_theme
 
@@ -181,7 +182,12 @@ def traduire_dataset(dataset: dict, *, url_plateforme: str,
             )
         else:
             avertissements.append(f"aucun thème ODS → repli '{code_theme}'")
-    keywords = list(champs.get("keywords") or []) + restants
+    # Territoire/référence géographique ODS (libellés, pas de champ RUDI dédié) :
+    # versés en mots-clés plutôt que perdus — même logique que les libellés de
+    # thème non mappés (`restants`).
+    keywords = (list(champs.get("keywords") or []) + restants
+               + list(champs.get("territory") or [])
+               + list(champs.get("geographic_reference") or []))
 
     licence, statut_licence = resoudre_licence(
         champs.get("licence_label"), champs.get("licence_url"),
@@ -195,6 +201,13 @@ def traduire_dataset(dataset: dict, *, url_plateforme: str,
         avertissements.append("licence ODS absente et aucun repli configuré")
     elif statut_licence == "absent_repli":
         avertissements.append("licence ODS absente → repli configuré appliqué")
+
+    frequence, statut_frequence = resoudre_update_frequency(champs.get("update_frequency"))
+    if statut_frequence == "inconnu":
+        avertissements.append(
+            f"fréquence de mise à jour ODS non référencée « {champs.get('update_frequency')} » "
+            "→ repli 'unknown'"
+        )
 
     url_fiche = url_fiche or url_fiche_ods(base, dataset_id)
     producer = producer or {"organization_name": champs.get("publisher") or hote}
@@ -225,6 +238,10 @@ def traduire_dataset(dataset: dict, *, url_plateforme: str,
         geography=geography,
         ajouter_medias_source=True,
     )
+    if champs.get("language"):
+        rudi_metadata["resource_languages"] = [champs["language"]]
+    if frequence:
+        rudi_metadata["dataset_update_frequency"] = frequence
     if collection_tag:
         rudi_metadata["collection_tag"] = collection_tag
 

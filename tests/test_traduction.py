@@ -31,12 +31,42 @@ class TestTraductionJddComplet(unittest.TestCase):
         self.assertIn("musée", rudi["keywords"])
         self.assertNotIn("Culture, Sports, Loisirs", rudi["keywords"])
         self.assertEqual(rudi["dataset_dates"]["updated"], "2025-03-12T09:41:37Z")
+        # created ET updated : le nœud dérive created=now() si seul updated est
+        # fourni (voir rudi_harvest_toolkit.pivot) — toujours les deux, identiques.
+        self.assertEqual(rudi["dataset_dates"]["created"], "2025-03-12T09:41:37Z")
         self.assertEqual(rudi["producer"]["organization_name"], "Ville de Rennes")
         self.assertEqual(rudi["access_condition"]["licence"]["licence_type"], "STANDARD")
         self.assertEqual(rudi["access_condition"]["licence"]["licence_label"], "odbl-1.0")
         self.assertEqual(rudi["collection_tag"], f"moissonneur-ods:{self.url}")
         self.assertEqual(infos["nb_medias_ods"], 3)
         self.assertEqual(infos["fichiers_locaux"], [])
+        # Métadonnées ODS jusque-là perdues : langue, fréquence de mise à jour,
+        # territoire/référence géographique (ces deux derniers en mots-clés,
+        # faute de champ RUDI dédié).
+        self.assertEqual(rudi["resource_languages"], ["fr"])
+        self.assertEqual(rudi["dataset_update_frequency"], "monthly")
+        self.assertIn("Rennes Métropole", rudi["keywords"])
+        self.assertIn("fr_35", rudi["keywords"])
+
+    def test_frequence_mise_a_jour_non_mappee_avertit_et_repli_unknown(self):
+        dataset = dict(self.dataset)
+        dataset["metas"] = {"default": dict(self.dataset["metas"]["default"],
+                                            update_frequency="Toutes les lunes bleues")}
+        rudi, infos = traduire_dataset(dataset, url_plateforme=self.url, mode="lien")
+        self.assertEqual(rudi["dataset_update_frequency"], "unknown")
+        self.assertTrue(any("fréquence de mise à jour ODS non référencée" in a
+                           for a in infos["avertissements"]))
+
+    def test_langue_et_frequence_absentes_omises_sans_avertissement(self):
+        dataset = dict(self.dataset)
+        defaut = dict(self.dataset["metas"]["default"])
+        defaut.pop("language", None)
+        defaut.pop("update_frequency", None)
+        dataset["metas"] = {"default": defaut}
+        rudi, infos = traduire_dataset(dataset, url_plateforme=self.url, mode="lien")
+        self.assertNotIn("resource_languages", rudi)
+        self.assertNotIn("dataset_update_frequency", rudi)
+        self.assertFalse(any("fréquence de mise à jour" in a for a in infos["avertissements"]))
 
     def test_local_id_deterministe_et_scopé_par_plateforme(self):
         rudi, _ = traduire_dataset(self.dataset, url_plateforme=self.url, mode="lien")
