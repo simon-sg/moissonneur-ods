@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import secrets
 import time
 import urllib.error
@@ -500,3 +501,47 @@ def renvoyer_ressources(credentials: dict, conf_rudi: dict, metadonnees: list[di
           "(champ total)")
     print(f"  - statuts nœud : curl -s '{node_catalog}/resources?limit=1'  (champ total)")
     return bilan
+
+
+def organisations_nouvellement_validees(conf_rudi: dict, chemin_etat: str) -> list[str]:
+    """Organisations dont le rapport portail (``organization_status=VALIDATED``,
+    reçu par le nœud quand un humain valide dans l'UI Strukture) n'a pas encore été
+    vu lors d'un précédent appel — état persisté dans ``chemin_etat`` (JSON,
+    ``{"organisations_traitees": [...]}``) pour ne pas retraiter indéfiniment les
+    mêmes organisations à chaque exécution automatique.
+
+    Ne modifie ``chemin_etat`` qu'après l'appel — c'est à l'appelant d'y écrire une
+    fois le renvoi effectivement tenté (``marquer_organisations_traitees``), pour ne
+    jamais perdre la trace d'une organisation validée si le renvoi échoue avant
+    d'avoir pu être tenté.
+    """
+    validees = {o["organization_id"] for o in lister_organisations(conf_rudi, statut="VALIDATED")
+               if o.get("organization_id")}
+    deja_traitees = _organisations_traitees(chemin_etat)
+    return sorted(validees - deja_traitees)
+
+
+def marquer_organisations_traitees(chemin_etat: str, organisation_ids: list[str]) -> None:
+    """Enregistre ``organisation_ids`` comme traitées dans ``chemin_etat`` (fusion
+    avec l'état existant, jamais un remplacement)."""
+    deja_traitees = _organisations_traitees(chemin_etat)
+    toutes = sorted(deja_traitees | set(organisation_ids))
+    Path(chemin_etat).write_text(json.dumps({"organisations_traitees": toutes}, indent=2),
+                                 encoding="utf-8")
+
+
+def _organisations_traitees(chemin_etat: str) -> set[str]:
+    if not os.path.isfile(chemin_etat):
+        return set()
+    try:
+        return set(json.loads(Path(chemin_etat).read_text(encoding="utf-8"))
+                   .get("organisations_traitees", []))
+    except (json.JSONDecodeError, OSError):
+        return set()
+
+
+def ressources_pour_organisations(metadonnees: list[dict], organisation_ids: list[str]) -> list[dict]:
+    """Sous-ensemble de ``metadonnees`` dont ``producer.organization_id`` est dans
+    ``organisation_ids`` — les ressources à (re)pousser pour ces organisations."""
+    ids = set(organisation_ids)
+    return [m for m in metadonnees if (m.get("producer") or {}).get("organization_id") in ids]

@@ -37,8 +37,11 @@ from .portail_client import (
     ConfigRaccordement,
     ErreurRaccordement,
     generer_ini_portail,
+    marquer_organisations_traitees,
+    organisations_nouvellement_validees,
     raccorder,
     renvoyer_ressources,
+    ressources_pour_organisations,
 )
 from .translation.licences import LICENCE_ODBL
 from .translation.themes import THEME_REPLI, THEMES_RUDI, charger_mapping_plateforme
@@ -112,9 +115,14 @@ def _ajouter_args_raccordement(parseur: argparse.ArgumentParser) -> None:
     groupe.add_argument("--force", action="store_true",
                         help="outrepasse les garde-fous anti-double-raccordement / nœud-non-vide")
     groupe.add_argument("--renvoyer-ressources", action="store_true",
-                        help="pousse les ressources du nœud vers le portail (Kalim) en direct — à lancer "
-                             "après --raccorder-portail --scenario peuple, une fois le .ini appliqué et le "
-                             "script SQL des organisations exécuté")
+                        help="pousse TOUTES les ressources du nœud vers le portail (Kalim) en direct — à "
+                             "lancer après --raccorder-portail --scenario peuple, une fois le .ini appliqué "
+                             "(confirmation nommée requise)")
+    groupe.add_argument("--renvoyer-si-organisations-validees", action="store_true",
+                        help="détecte les organisations venant d'être validées côté portail (rapport "
+                             "portail reçu par le nœud, organization_status=VALIDATED) et renvoie "
+                             "uniquement les ressources qui leur sont rattachées — sans confirmation "
+                             "interactive (sûr, idempotent, lançable périodiquement/par cron)")
     groupe.add_argument("--reinitialiser-noeud", action="store_true",
                         help="supprime toutes les ressources et organisations LOCALES du nœud (jamais le "
                              "raccordement portail) et le(s) fichier(s) d'état local — pour chaîner "
@@ -390,7 +398,7 @@ Ceci n'est PAS fait automatiquement par moissonneur-ods.""")
 
 def executer_renvoyer_ressources(args, confirmer=input) -> int:
     """Pousse les ressources du nœud vers le portail (Kalim) — à lancer une fois le
-    .ini appliqué et le SQL des organisations exécuté (scénario peuple)."""
+    .ini appliqué (scénario peuple)."""
     conf = charger_conf_rudi(args.rudi_conf) if args.rudi_conf else None
     if not conf:
         print("Configuration du nœud RUDI absente ou introuvable (--rudi-conf) — renvoi impossible.")
@@ -419,6 +427,56 @@ def executer_renvoyer_ressources(args, confirmer=input) -> int:
         print("Renvoi annulé.")
         return 0
     renvoyer_ressources(credentials, conf, metadonnees)
+    return 0
+
+
+def executer_renvoi_automatique(args) -> int:
+    """Détecte les organisations venant d'être validées côté portail (rapport
+    portail reçu par le nœud : organization_status=VALIDATED) et renvoie
+    uniquement les ressources qui leur sont rattachées.
+
+    Sans confirmation interactive, contrairement à --renvoyer-ressources : la
+    portée est automatiquement restreinte aux seules organisations nouvellement
+    validées (jamais tout le catalogue), le push vers Kalim est idempotent
+    (POST/PUT décidé par ressource), et c'est explicitement l'automatisation que
+    l'utilisateur a demandée pour ce workflow — pensée pour un cron ou un run
+    périodique, pas une action ponctuelle supervisée.
+    """
+    conf = charger_conf_rudi(args.rudi_conf) if args.rudi_conf else None
+    if not conf:
+        print("Configuration du nœud RUDI absente ou introuvable (--rudi-conf) — renvoi impossible.")
+        return 2
+    chemin_credentials = _chemin_conf(args, "credentials_portail.json")
+    if not os.path.isfile(chemin_credentials):
+        print(f"Fichier {chemin_credentials} introuvable.")
+        print("  Exécuter d'abord : python3 -m moissonneur_ods --rudi-conf "
+              f"{args.rudi_conf} --raccorder-portail --scenario peuple --portail-url <url> …")
+        return 2
+    try:
+        credentials = json.loads(Path(chemin_credentials).read_text())
+    except (json.JSONDecodeError, OSError) as e:
+        print(f"Fichier {chemin_credentials} illisible : {e}")
+        return 2
+
+    chemin_etat = _chemin_conf(args, "etat_organisations_validees.json")
+    nouvelles = organisations_nouvellement_validees(conf, chemin_etat)
+    if not nouvelles:
+        print("Aucune organisation nouvellement validée depuis le dernier contrôle — rien à renvoyer.")
+        return 0
+    print(f"{len(nouvelles)} organisation(s) nouvellement validée(s) côté portail : {nouvelles}")
+
+    metadonnees = toutes_metadonnees_rudi(conf)
+    a_renvoyer = ressources_pour_organisations(metadonnees, nouvelles)
+    if not a_renvoyer:
+        print("Aucune ressource locale ne référence ces organisations — rien à renvoyer.")
+        marquer_organisations_traitees(chemin_etat, nouvelles)
+        return 0
+    print(f"{len(a_renvoyer)} ressource(s) concernée(s), renvoi vers Kalim...")
+    renvoyer_ressources(credentials, conf, a_renvoyer)
+    # Marquées traitées après tentative (pas avant) : si renvoyer_ressources()
+    # levait une exception avant d'arriver ici, la prochaine exécution les
+    # retrouverait encore « nouvelles » et retenterait.
+    marquer_organisations_traitees(chemin_etat, nouvelles)
     return 0
 
 
@@ -482,11 +540,14 @@ def main(argv=None) -> int:
             return executer_raccordement(args)
         if args.renvoyer_ressources:
             return executer_renvoyer_ressources(args)
+        if args.renvoyer_si_organisations_validees:
+            return executer_renvoi_automatique(args)
         if args.reinitialiser_noeud:
             return executer_reinitialisation(args)
         if not args.url:
             print("L'URL de la plateforme ODS est requise (--url) hors modes "
-                  "--raccorder-portail / --renvoyer-ressources / --reinitialiser-noeud.")
+                  "--raccorder-portail / --renvoyer-ressources / "
+                  "--renvoyer-si-organisations-validees / --reinitialiser-noeud.")
             return 2
         if args.menage:
             return executer_menage(args)

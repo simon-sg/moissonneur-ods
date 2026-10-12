@@ -15,10 +15,13 @@ from moissonneur_ods.portail_client import (
     creer_ou_trouver_noeud,
     creer_ou_trouver_producteur,
     generer_ini_portail,
+    marquer_organisations_traitees,
     obtenir_token_admin,
+    organisations_nouvellement_validees,
     portal_ready,
     raccorder,
     renvoyer_ressources,
+    ressources_pour_organisations,
 )
 
 
@@ -278,6 +281,63 @@ class TestRenvoyerRessources(unittest.TestCase):
         with mock.patch.object(portail_client, "url_catalog", return_value="http://node:3030/catalog"):
             with self.assertRaises(portail_client.ErreurRaccordement):
                 renvoyer_ressources(creds, {"url": "http://node:3032"}, [])
+
+
+class TestOrganisationsNouvellementValidees(unittest.TestCase):
+    def test_exclut_les_organisations_deja_traitees(self):
+        with tempfile.TemporaryDirectory() as d:
+            chemin_etat = os.path.join(d, "etat_organisations_validees.json")
+            with open(chemin_etat, "w", encoding="utf-8") as f:
+                json.dump({"organisations_traitees": ["org-1"]}, f)
+            with mock.patch.object(portail_client, "lister_organisations",
+                                   return_value=[{"organization_id": "org-1"},
+                                                {"organization_id": "org-2"}]):
+                self.assertEqual(
+                    organisations_nouvellement_validees({"url": "http://n:3032"}, chemin_etat),
+                    ["org-2"],
+                )
+
+    def test_aucun_etat_prealable_retourne_toutes_les_validees(self):
+        with tempfile.TemporaryDirectory() as d:
+            chemin_etat = os.path.join(d, "etat_organisations_validees.json")
+            with mock.patch.object(portail_client, "lister_organisations",
+                                   return_value=[{"organization_id": "org-9"}]):
+                self.assertEqual(
+                    organisations_nouvellement_validees({"url": "http://n:3032"}, chemin_etat),
+                    ["org-9"],
+                )
+
+    def test_ne_modifie_pas_le_fichier_etat(self):
+        with tempfile.TemporaryDirectory() as d:
+            chemin_etat = os.path.join(d, "etat_organisations_validees.json")
+            with mock.patch.object(portail_client, "lister_organisations",
+                                   return_value=[{"organization_id": "org-1"}]):
+                organisations_nouvellement_validees({"url": "http://n:3032"}, chemin_etat)
+            self.assertFalse(os.path.isfile(chemin_etat))
+
+
+class TestMarquerOrganisationsTraitees(unittest.TestCase):
+    def test_fusionne_avec_etat_existant(self):
+        with tempfile.TemporaryDirectory() as d:
+            chemin_etat = os.path.join(d, "etat.json")
+            marquer_organisations_traitees(chemin_etat, ["org-1"])
+            marquer_organisations_traitees(chemin_etat, ["org-2"])
+            with open(chemin_etat, encoding="utf-8") as f:
+                self.assertEqual(sorted(json.load(f)["organisations_traitees"]),
+                                 ["org-1", "org-2"])
+
+
+class TestRessourcesPourOrganisations(unittest.TestCase):
+    def test_filtre_sur_producer_organization_id(self):
+        metas = [
+            {"global_id": "g1", "producer": {"organization_id": "org-1"}},
+            {"global_id": "g2", "producer": {"organization_id": "org-2"}},
+            {"global_id": "g3"},  # pas de producer : jamais sélectionnée
+        ]
+        self.assertEqual(
+            [m["global_id"] for m in ressources_pour_organisations(metas, ["org-1"])],
+            ["g1"],
+        )
 
 
 if __name__ == "__main__":
