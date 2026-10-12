@@ -545,3 +545,47 @@ def ressources_pour_organisations(metadonnees: list[dict], organisation_ids: lis
     ``organisation_ids`` — les ressources à (re)pousser pour ces organisations."""
     ids = set(organisation_ids)
     return [m for m in metadonnees if (m.get("producer") or {}).get("organization_id") in ids]
+
+
+def supprimer_ressources_portail(credentials: dict, global_ids: list[str]) -> dict:
+    """Supprime des ressources déjà poussées côté portail (Kalim), par ``global_id``.
+
+    ``DELETE {portail}/kalim/v1/resources/{global_id}`` (``ResourcesController``
+    côté Kalim, même authentification robot que le push) — **asynchrone** comme le
+    push : crée une demande d'intégration de type DELETE traitée ensuite par le
+    planificateur Kalim, pas une suppression instantanée (même mise en garde que
+    ``renvoyer_ressources`` : laisser au moins quelques minutes avant de conclure à
+    un blocage, cf. mémoire ``project_kalim_scheduler_lenteur``).
+
+    Ne touche jamais le nœud local — contrairement à ``renvoyer_ressources``, ne
+    nécessite pas la liste complète des métadonnées (pas de GET préalable sur le
+    nœud), seulement les ``global_id``. Utile en particulier quand le nœud source a
+    déjà été réinitialisé localement (``--reinitialiser-noeud``) et qu'il ne reste
+    donc aucune trace locale des ressources à faire disparaître côté portail.
+    """
+    if not global_ids:
+        raise ErreurRaccordement("Aucun global_id à supprimer côté portail.")
+    portal_url = credentials["portal_url"]
+    login = credentials.get("node_login") or credentials["node_uuid"]
+    password = credentials["node_password"]
+    print(f"{len(global_ids)} ressource(s) à supprimer directement côté Kalim...")
+    token = obtenir_token_robot(portal_url, login, password)
+    bilan = {"DELETE": 0, "echec": 0}
+
+    for n, gid in enumerate(global_ids, 1):
+        statut, texte = _requete(
+            f"{portal_url}/kalim/v1/resources/{gid}", "DELETE",
+            entetes={"Authorization": f"Bearer {token}"})
+        if statut == 401:  # token expiré : renouveler et rejouer
+            token = obtenir_token_robot(portal_url, login, password)
+            statut, texte = _requete(
+                f"{portal_url}/kalim/v1/resources/{gid}", "DELETE",
+                entetes={"Authorization": f"Bearer {token}"})
+        if statut == 200:
+            bilan["DELETE"] += 1
+            print(f"  [{n}/{len(global_ids)}] DELETE OK — {gid}", flush=True)
+        else:
+            bilan["echec"] += 1
+            print(f"  [{n}/{len(global_ids)}] DELETE {statut} — {gid} : {texte[:150]}", flush=True)
+        time.sleep(PAUSE_S)
+    return bilan

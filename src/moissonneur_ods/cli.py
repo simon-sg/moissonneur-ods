@@ -42,6 +42,7 @@ from .portail_client import (
     raccorder,
     renvoyer_ressources,
     ressources_pour_organisations,
+    supprimer_ressources_portail,
 )
 from .translation.licences import LICENCE_ODBL
 from .translation.themes import THEME_REPLI, THEMES_RUDI, charger_mapping_plateforme
@@ -127,6 +128,13 @@ def _ajouter_args_raccordement(parseur: argparse.ArgumentParser) -> None:
                         help="supprime toutes les ressources et organisations LOCALES du nœud (jamais le "
                              "raccordement portail) et le(s) fichier(s) d'état local — pour chaîner "
                              "plusieurs tests bout-en-bout sur des plateformes ODS différentes sans résidu")
+    groupe.add_argument("--supprimer-ressources-portail", action="store_true",
+                        help="supprime côté portail (Kalim) les ressources déjà poussées — par défaut "
+                             "celles du nœud local (--rudi-conf), ou --global-ids-fichier si le nœud a "
+                             "déjà été réinitialisé localement ; asynchrone (confirmation nommée requise)")
+    groupe.add_argument("--global-ids-fichier", default=None,
+                        help="JSON {\"global_ids\": [...]} à utiliser avec --supprimer-ressources-portail "
+                             "quand le nœud local ne contient plus les ressources à supprimer")
 
 
 def _licence_repli(nom: str):
@@ -480,6 +488,49 @@ def executer_renvoi_automatique(args) -> int:
     return 0
 
 
+def executer_suppression_portail(args, confirmer=input) -> int:
+    """Supprime côté portail (Kalim) des ressources déjà poussées — par défaut
+    celles encore présentes sur le nœud local, ou --global-ids-fichier si le nœud a
+    déjà été réinitialisé localement (donc plus aucune trace locale des global_id
+    à supprimer). Asynchrone : voir supprimer_ressources_portail()."""
+    chemin_credentials = _chemin_conf(args, "credentials_portail.json")
+    if not os.path.isfile(chemin_credentials):
+        print(f"Fichier {chemin_credentials} introuvable.")
+        return 2
+    try:
+        credentials = json.loads(Path(chemin_credentials).read_text())
+    except (json.JSONDecodeError, OSError) as e:
+        print(f"Fichier {chemin_credentials} illisible : {e}")
+        return 2
+
+    if args.global_ids_fichier:
+        try:
+            ids = json.loads(Path(args.global_ids_fichier).read_text())["global_ids"]
+        except (json.JSONDecodeError, OSError, KeyError) as e:
+            print(f"Fichier {args.global_ids_fichier} illisible ou mal formé : {e}")
+            return 2
+    else:
+        conf = charger_conf_rudi(args.rudi_conf) if args.rudi_conf else None
+        if not conf:
+            print("Configuration du nœud RUDI absente ou introuvable (--rudi-conf) — "
+                  "et --global-ids-fichier non fourni.")
+            return 2
+        metadonnees = toutes_metadonnees_rudi(conf)
+        ids = [m.get("global_id") for m in metadonnees if m.get("global_id")]
+
+    if not ids:
+        print("Aucun global_id à supprimer — rien à faire.")
+        return 0
+    print(f"{len(ids)} ressource(s) à supprimer côté portail (Kalim) — asynchrone, "
+          "ne disparaîtra pas instantanément du catalogue public (Konsult).")
+    saisie = confirmer("\nTaper 'SUPPRIMER-PORTAIL' pour continuer (ou Entrée pour annuler) : ").strip()
+    if saisie != "SUPPRIMER-PORTAIL":
+        print("Suppression annulée.")
+        return 0
+    supprimer_ressources_portail(credentials, ids)
+    return 0
+
+
 def executer_reinitialisation(args, confirmer=input) -> int:
     """Vide le contenu LOCAL du nœud (ressources + organisations) pour chaîner
     plusieurs tests bout-en-bout sur des plateformes ODS différentes sans résidu.
@@ -542,12 +593,15 @@ def main(argv=None) -> int:
             return executer_renvoyer_ressources(args)
         if args.renvoyer_si_organisations_validees:
             return executer_renvoi_automatique(args)
+        if args.supprimer_ressources_portail:
+            return executer_suppression_portail(args)
         if args.reinitialiser_noeud:
             return executer_reinitialisation(args)
         if not args.url:
             print("L'URL de la plateforme ODS est requise (--url) hors modes "
                   "--raccorder-portail / --renvoyer-ressources / "
-                  "--renvoyer-si-organisations-validees / --reinitialiser-noeud.")
+                  "--renvoyer-si-organisations-validees / --supprimer-ressources-portail / "
+                  "--reinitialiser-noeud.")
             return 2
         if args.menage:
             return executer_menage(args)

@@ -22,6 +22,7 @@ from moissonneur_ods.portail_client import (
     raccorder,
     renvoyer_ressources,
     ressources_pour_organisations,
+    supprimer_ressources_portail,
 )
 
 
@@ -281,6 +282,40 @@ class TestRenvoyerRessources(unittest.TestCase):
         with mock.patch.object(portail_client, "url_catalog", return_value="http://node:3030/catalog"):
             with self.assertRaises(portail_client.ErreurRaccordement):
                 renvoyer_ressources(creds, {"url": "http://node:3032"}, [])
+
+
+class TestSupprimerRessourcesPortail(unittest.TestCase):
+    def test_delete_par_global_id_avec_renouvellement_token(self):
+        appels = []
+
+        def fake_requete(url, methode="GET", corps=None, entetes=None, brut=None, timeout=60):
+            appels.append((methode, url))
+            if url.endswith("/oauth2/token"):
+                return 200, json.dumps({"access_token": "tok"})
+            if url.endswith("/kalim/v1/resources/g1"):
+                return 200, ""
+            if url.endswith("/kalim/v1/resources/g2"):
+                return 404, "introuvable"
+            raise AssertionError(f"appel inattendu : {methode} {url}")
+
+        creds = {"portal_url": "http://portail.test", "node_uuid": "node-1",
+                 "node_login": "node-1", "node_password": "pw"}
+        with mock.patch.object(portail_client, "_requete", side_effect=fake_requete), \
+             mock.patch.object(portail_client.time, "sleep"):
+            bilan = supprimer_ressources_portail(creds, ["g1", "g2"])
+
+        self.assertEqual(bilan, {"DELETE": 1, "echec": 1})
+        methodes_delete = [(m, u) for m, u in appels if m == "DELETE"]
+        self.assertEqual(methodes_delete, [
+            ("DELETE", "http://portail.test/kalim/v1/resources/g1"),
+            ("DELETE", "http://portail.test/kalim/v1/resources/g2"),
+        ])
+
+    def test_aucun_global_id_leve_erreur(self):
+        creds = {"portal_url": "http://portail.test", "node_uuid": "n",
+                 "node_login": "n", "node_password": "pw"}
+        with self.assertRaises(portail_client.ErreurRaccordement):
+            supprimer_ressources_portail(creds, [])
 
 
 class TestOrganisationsNouvellementValidees(unittest.TestCase):
