@@ -1,18 +1,33 @@
 """Construction des médias selon le mode global du run : ``lien`` ou ``copie``.
 
-- ``lien`` : chaque pièce jointe / export alternatif ODS devient un média ``SERVICE``
-  pointant vers l'URL ODS — aucun téléchargement ;
+- ``lien`` : chaque pièce jointe / export alternatif ODS devient, par défaut, un
+  média ``FILE`` **hybride** : l'empreinte (SHA-256) et la taille sont calculées en
+  lisant le fichier une fois en flux (jamais écrit sur disque, jamais stocké sur
+  notre nœud), mais ``connector.url`` reste l'URL distante ODS — ça donne un vrai
+  bouton télécharger côté portail (réservé à ``media_type: FILE``, voir
+  ``data-set-infos.component.html``/``detail-functions.ts`` de
+  ``rudi-portal-source``) sans jamais copier la donnée. Accepté avec l'utilisateur
+  le 2026-10-12 : le compromis est que le checksum devient obsolète si la donnée
+  ODS change après la moisson sans nouveau run (RUDI n'a aucun moyen de le savoir,
+  puisqu'il ne recalcule jamais lui-même ce qu'il n'a pas stocké). Repli en
+  ``SERVICE`` simple (pas de bouton, juste l'URL en texte copiable) si le type MIME
+  n'est pas dans l'énumération fermée du nœud (``FileTypes.js``) ou si la lecture
+  échoue/dépasse la taille max — jamais d'échec de run pour ça.
 - ``copie`` : téléchargement local (garde-fou de taille) puis upload ``FILE`` via
   ``rudi_harvest_toolkit.rudi_client.publier_dataset``.
 
 Un JDD sans pièce jointe ni export — ou dont un export est trop volumineux / en
-échec de téléchargement — ne fait jamais échouer le run : il retombe en média
-``SERVICE`` (repli automatique, loggué). Les médias ``FILE`` sont toujours placés en
-tête de ``available_formats`` : ``publier_dataset`` aligne ``fichiers_filtres[i]`` sur
-``available_formats[i]``.
+échec de téléchargement/lecture — ne fait jamais échouer le run : il retombe en
+média ``SERVICE`` (repli automatique, loggué). Les médias ``FILE`` sont toujours
+placés en tête de ``available_formats``. En mode copie, ``publier_dataset`` aligne
+``fichiers_filtres[i]`` sur ``available_formats[i]`` et uploade ; en mode lien, le
+FILE hybride est déjà complet (``file_size``/``checksum`` posés ici) —
+``publier_dataset`` le reconnaît et ne tente jamais de l'uploader (voir
+``rudi_harvest_toolkit.rudi_client._media_file_deja_complet``).
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import tempfile
 import unicodedata
@@ -28,6 +43,35 @@ MODES = (MODE_LIEN, MODE_COPIE)
 TAILLE_MAX_DEFAUT = 500 * 1024 * 1024  # 500 Mo — même limite que le nœud RUDI.
 
 _URL_PLACEHOLDER = "À_RENSEIGNER_APRES_DEPOT_SUR_NOEUD"
+
+_ALGO_EMPREINTE = "SHA-256"
+
+# Miroir de l'énumération fermée côté nœud (rudi-catalog, definitions/thesaurus/
+# FileTypes.js) : un FILE hors de cette liste est rejeté par le nœud à la
+# publication — vérifié avant toute lecture distante, jamais après.
+_TYPES_FICHIER_ACCEPTES = frozenset({
+    "application/epub+zip", "application/geo+json", "application/geopackage+sqlite3",
+    "application/graphql", "application/gzip", "application/javascript", "application/json",
+    "application/ld+json", "application/msword", "application/netcdf", "application/octet-stream",
+    "application/pdf", "application/sql", "application/vnd.api+json", "application/vnd.ms-excel",
+    "application/vnd.ms-powerpoint", "application/vnd.oasis.opendocument.presentation",
+    "application/vnd.oasis.opendocument.spreadsheet", "application/vnd.oasis.opendocument.text",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/x-7z-compressed", "application/x-bzip", "application/x-bzip2",
+    "application/x-executable", "application/x-tar", "application/x-www-form-urlencoded",
+    "application/xml", "application/zip", "application/zstd",
+    "audio/aac", "audio/m4a", "audio/mpeg", "audio/ogg", "audio/wav", "audio/webm",
+    "font/otf", "font/ttf",
+    "image/apng", "image/bmp", "image/flif", "image/gif", "image/jpeg", "image/png",
+    "image/tiff", "image/vnd.microsoft.icon", "image/webp", "image/x-mng",
+    "multipart/form-data",
+    "text/css", "text/csv", "text/html", "text/markdown", "text/php", "text/plain",
+    "text/x-yaml", "text/xml",
+    "video/3gpp", "video/mp4", "video/mpeg", "video/ogg", "video/quicktime", "video/webm",
+    "video/x-matroska", "video/x-ms-wmv", "video/x-msvideo",
+})
 
 
 def url_fiche_ods(url_plateforme: str, dataset_id: str) -> str:
@@ -65,7 +109,19 @@ def _nom_media(base: str, deja_utilises: set[str]) -> str:
 
 
 def _media_id(local_id: str, cle: str) -> str:
-    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"{local_id}/ods-media/{cle}"))
+    """UUID déterministe (même entrée → même id, utile à l'incrémental), mais dont
+    les nibbles version/variant sont forcés pour ressembler à un vrai UUID v4 —
+    ``rudi_node_write`` (``check_is_uuid4``, client Python, pas le nœud lui-même
+    qui valide juste un format générique) exige strictement ``UUID.version == 4``,
+    ce qu'un vrai ``uuid5`` ne satisfait jamais. Sans conséquence pour un média
+    SERVICE (son id est de toute façon régénéré par ``publier_dataset`` avant
+    publication) ; nécessaire en revanche pour un FILE hybride (voir
+    ``_media_file_distant``), qui n'est jamais régénéré."""
+    brut = uuid.uuid5(uuid.NAMESPACE_URL, f"{local_id}/ods-media/{cle}")
+    octets = bytearray(brut.bytes)
+    octets[6] = (octets[6] & 0x0F) | 0x40  # version = 4
+    octets[8] = (octets[8] & 0x3F) | 0x80  # variant = 10xx
+    return str(uuid.UUID(bytes=bytes(octets)))
 
 
 def _media_service(media_id: str, nom: str, caption: str, url: str) -> dict:
@@ -85,6 +141,51 @@ def _media_file(media_id: str, nom: str, caption: str) -> dict:
         "media_name": nom,
         "media_caption": caption,
         "connector": {"url": _URL_PLACEHOLDER, "interface_contract": "dwnl"},
+    }
+
+
+def _empreinte_distante(url: str, taille_max: int, session, timeout: int = 120) -> dict:
+    """Lit une ressource distante en flux pour calculer son empreinte SHA-256 et sa
+    taille — jamais écrite sur disque, jamais stockée. Retourne ``{hash, taille}``
+    ou ``{erreur}`` (mêmes codes que ``_telecharger`` : ``trop_gros``/``reseau``)."""
+    try:
+        reponse = session.get(url, stream=True, timeout=timeout, allow_redirects=True)
+        reponse.raise_for_status()
+    except Exception as e:
+        return {"erreur": "reseau", "detail": str(e)}
+    longueur = reponse.headers.get("Content-Length")
+    if longueur and longueur.isdigit() and int(longueur) > taille_max:
+        return {"erreur": "trop_gros", "taille": int(longueur)}
+    empreinte = hashlib.sha256()
+    ecrits = 0
+    try:
+        for morceau in reponse.iter_content(chunk_size=65536):
+            if not morceau:
+                continue
+            ecrits += len(morceau)
+            if ecrits > taille_max:
+                return {"erreur": "trop_gros", "taille": ecrits}
+            empreinte.update(morceau)
+    except Exception as e:
+        return {"erreur": "reseau", "detail": str(e)}
+    return {"hash": empreinte.hexdigest(), "taille": ecrits}
+
+
+def _media_file_distant(media_id: str, nom: str, caption: str, url: str,
+                        mimetype: str, empreinte: dict) -> dict:
+    """Média ``FILE`` « hybride » : empreinte/taille réelles, mais ``connector.url``
+    reste l'URL distante — jamais uploadé, jamais stocké par nous (voir docstring
+    du module)."""
+    return {
+        "media_id": media_id,
+        "media_type": "FILE",
+        "media_name": nom,
+        "media_caption": caption,
+        "connector": {"url": url, "interface_contract": "dwnl"},
+        "file_type": mimetype,
+        "file_size": empreinte["taille"],
+        "checksum": {"algo": _ALGO_EMPREINTE, "hash": empreinte["hash"]},
+        "file_storage_status": "available",
     }
 
 
@@ -202,16 +303,20 @@ def estimer_taille(url: str, session=None, timeout: int = 30) -> int | None:
 def construire_medias(dataset: dict, local_id: str, url_plateforme: str, mode: str, *,
                       dossier_telechargement: str | None = None,
                       taille_max_octets: int = TAILLE_MAX_DEFAUT,
-                      session=None, telecharger=None) -> tuple[list[dict], list[str], list[str]]:
+                      session=None, telecharger=None,
+                      empreinte_distante=None) -> tuple[list[dict], list[str], list[str]]:
     """Retourne ``(medias, fichiers_locaux, avertissements)`` pour un JDD.
 
     ``medias`` : entrées ``available_formats`` (FILE d'abord, puis SERVICE).
-    ``fichiers_locaux`` : chemins des FILE, dans le même ordre que les FILE de ``medias``.
+    ``fichiers_locaux`` : chemins des FILE **en mode copie seulement** — un FILE
+    hybride en mode lien (voir docstring du module) n'a pas de fichier local, il
+    n'en a jamais eu besoin.
     """
     if mode not in MODES:
         raise ValueError(f"Mode inconnu : {mode!r} (attendu : {MODES})")
     session = session or _session_defaut
     telecharger = telecharger or _telecharger
+    empreinte_distante = empreinte_distante or _empreinte_distante
 
     entrees = entrees_donnees(dataset, url_plateforme)
     noms_utilises: set[str] = set()
@@ -226,6 +331,25 @@ def construire_medias(dataset: dict, local_id: str, url_plateforme: str, mode: s
         media_id = _media_id(local_id, entree["url"])
 
         if mode == MODE_LIEN:
+            mimetype = entree.get("mimetype")
+            if mimetype in _TYPES_FICHIER_ACCEPTES:
+                resultat = empreinte_distante(entree["url"], taille_max_octets, session)
+                if not resultat.get("erreur"):
+                    file_medias.append(_media_file_distant(
+                        media_id, nom, caption, entree["url"], mimetype, resultat))
+                    continue
+                raison = resultat["erreur"]
+                if raison == "trop_gros":
+                    avertissements.append(
+                        f"{nom} : trop volumineux pour l'empreinte "
+                        f"({resultat.get('taille', '?')} octets) — repli en SERVICE sans bouton "
+                        f"télécharger, vers {entree['url']}"
+                    )
+                else:
+                    avertissements.append(
+                        f"{nom} : échec de lecture pour l'empreinte ({raison}) — repli en "
+                        f"SERVICE sans bouton télécharger, vers {entree['url']}"
+                    )
             service_medias.append(_media_service(media_id, nom, caption, entree["url"]))
             continue
 

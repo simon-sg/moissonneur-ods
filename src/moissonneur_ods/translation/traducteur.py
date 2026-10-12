@@ -146,7 +146,7 @@ def traduire_dataset(dataset: dict, *, url_plateforme: str,
                      taille_max_octets: int | None = None,
                      session_http=None, geography: dict | None = None,
                      collection_tag: str | None = None, mapping: dict | None = None,
-                     url_fiche: str | None = None) -> tuple[dict, dict]:
+                     url_fiche: str | None = None, empreinte_distante=None) -> tuple[dict, dict]:
     """Traduit un JDD ODS en ``rudi_metadata`` + ``infos`` (avertissements, médias…).
 
     Ne publie rien et ne télécharge rien de lourd en mode ``lien``. Retourne un tuple
@@ -216,7 +216,7 @@ def traduire_dataset(dataset: dict, *, url_plateforme: str,
     medias, fichiers, avert_medias = construire_medias(
         dataset, local_id, base, mode,
         dossier_telechargement=dossier_telechargement,
-        session=session_http, **kwargs_taille,
+        session=session_http, empreinte_distante=empreinte_distante, **kwargs_taille,
     )
     avertissements.extend(avert_medias)
 

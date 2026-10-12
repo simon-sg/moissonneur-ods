@@ -15,6 +15,12 @@ def _fix(nom):
         return json.load(f)
 
 
+def _empreinte_fake(url, taille_max, session):
+    """Mode lien calcule désormais une empreinte distante (FILE hybride, voir
+    mode.py) même pour un dataset "complet" — jamais de vrai appel réseau en test."""
+    return {"hash": "deadbeef" * 8, "taille": 42}
+
+
 class TestTraductionJddComplet(unittest.TestCase):
     def setUp(self):
         self.url = "https://data.rennesmetropole.fr"
@@ -25,6 +31,7 @@ class TestTraductionJddComplet(unittest.TestCase):
             self.dataset, url_plateforme=self.url, mode="lien",
             table_themes={"Culture, Sports, Loisirs": "culture"},
             collection_tag=collection_tag_pour(self.url),
+            empreinte_distante=_empreinte_fake,
         )
         self.assertEqual(infos["theme"], "culture")
         self.assertEqual(rudi["theme"], "culture")
@@ -52,7 +59,8 @@ class TestTraductionJddComplet(unittest.TestCase):
         dataset = dict(self.dataset)
         dataset["metas"] = {"default": dict(self.dataset["metas"]["default"],
                                             update_frequency="Toutes les lunes bleues")}
-        rudi, infos = traduire_dataset(dataset, url_plateforme=self.url, mode="lien")
+        rudi, infos = traduire_dataset(dataset, url_plateforme=self.url, mode="lien",
+                                       empreinte_distante=_empreinte_fake)
         self.assertEqual(rudi["dataset_update_frequency"], "unknown")
         self.assertTrue(any("fréquence de mise à jour ODS non référencée" in a
                            for a in infos["avertissements"]))
@@ -63,23 +71,28 @@ class TestTraductionJddComplet(unittest.TestCase):
         defaut.pop("language", None)
         defaut.pop("update_frequency", None)
         dataset["metas"] = {"default": defaut}
-        rudi, infos = traduire_dataset(dataset, url_plateforme=self.url, mode="lien")
+        rudi, infos = traduire_dataset(dataset, url_plateforme=self.url, mode="lien",
+                                       empreinte_distante=_empreinte_fake)
         self.assertNotIn("resource_languages", rudi)
         self.assertNotIn("dataset_update_frequency", rudi)
         self.assertFalse(any("fréquence de mise à jour" in a for a in infos["avertissements"]))
 
     def test_local_id_deterministe_et_scopé_par_plateforme(self):
-        rudi, _ = traduire_dataset(self.dataset, url_plateforme=self.url, mode="lien")
-        rudi2, _ = traduire_dataset(self.dataset, url_plateforme=self.url, mode="lien")
+        rudi, _ = traduire_dataset(self.dataset, url_plateforme=self.url, mode="lien",
+                                   empreinte_distante=_empreinte_fake)
+        rudi2, _ = traduire_dataset(self.dataset, url_plateforme=self.url, mode="lien",
+                                    empreinte_distante=_empreinte_fake)
         self.assertEqual(rudi["local_id"], rudi2["local_id"])
         autre_url = "https://data.autreplateforme.fr"
-        rudi_autre, _ = traduire_dataset(self.dataset, url_plateforme=autre_url, mode="lien")
+        rudi_autre, _ = traduire_dataset(self.dataset, url_plateforme=autre_url, mode="lien",
+                                         empreinte_distante=_empreinte_fake)
         self.assertNotEqual(rudi["local_id"], rudi_autre["local_id"])
         attendu = local_id_pour(self.url, self.dataset["dataset_id"])
         self.assertEqual(rudi["local_id"], attendu)
 
     def test_description_html_convertie_en_texte_brut(self):
-        rudi, _ = traduire_dataset(self.dataset, url_plateforme=self.url, mode="lien")
+        rudi, _ = traduire_dataset(self.dataset, url_plateforme=self.url, mode="lien",
+                                   empreinte_distante=_empreinte_fake)
         texte = rudi["summary"][0]["text"]
         self.assertNotIn("<p>", texte)
         self.assertIn("Entrées payantes", texte)

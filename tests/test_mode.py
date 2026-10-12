@@ -30,25 +30,67 @@ def _trop_gros(url, dossier, nom, taille_max, session):
     return {"erreur": "trop_gros", "taille": 2_000_000_000}
 
 
+def _empreinte_ok(url, taille_max, session):
+    return {"hash": "deadbeef" * 8, "taille": 42}
+
+
+def _empreinte_echec_reseau(url, taille_max, session):
+    return {"erreur": "reseau", "detail": "timeout"}
+
+
 class TestModeLien(unittest.TestCase):
     def setUp(self):
         self.url = "https://data.rennesmetropole.fr"
         self.dataset = _fix("dataset_complet.json")
 
-    def test_tout_en_service_sans_telechargement(self):
+    def test_hybride_file_pour_types_acceptes_sans_telechargement_local(self):
+        # dataset_complet.json : 2 attachments (csv, pdf) + 1 alternative_export
+        # (json) — les 3 mimetypes sont dans l'énumération fermée du nœud, donc
+        # les 3 deviennent des FILE hybrides (empreinte calculée, jamais stockés).
         medias, fichiers, avertissements = construire_medias(
             self.dataset, "local-id", self.url, MODE_LIEN,
+            empreinte_distante=_empreinte_ok,
         )
-        self.assertEqual(fichiers, [])
+        self.assertEqual(fichiers, [])  # jamais de fichier local en mode lien
         self.assertEqual(avertissements, [])
-        self.assertTrue(all(m["media_type"] == "SERVICE" for m in medias))
+        self.assertTrue(all(m["media_type"] == "FILE" for m in medias))
         self.assertEqual(len(medias), 3)
+        for m in medias:
+            self.assertEqual(m["connector"]["interface_contract"], "dwnl")
+            self.assertEqual(m["file_size"], 42)
+            self.assertEqual(m["checksum"]["hash"], "deadbeef" * 8)
+            # connector.url reste l'URL ODS distante, jamais une URL de stockage à nous
+            self.assertTrue(m["connector"]["url"].startswith(self.url))
         urls = {m["connector"]["url"] for m in medias}
         self.assertIn(
             "https://data.rennesmetropole.fr/api/explore/v2.1/catalog/datasets/"
             "frequentation-detaillee-du-musee-des-beaux-arts/exports/csv",
             urls,
         )
+
+    def test_echec_empreinte_repli_en_service_avec_avertissement(self):
+        medias, fichiers, avertissements = construire_medias(
+            self.dataset, "local-id", self.url, MODE_LIEN,
+            empreinte_distante=_empreinte_echec_reseau,
+        )
+        self.assertEqual(fichiers, [])
+        self.assertTrue(all(m["media_type"] == "SERVICE" for m in medias))
+        self.assertEqual(len(avertissements), 3)
+        self.assertTrue(all("repli en SERVICE sans bouton télécharger" in a for a in avertissements))
+
+    def test_mimetype_non_accepte_repli_direct_en_service_sans_lecture(self):
+        dataset = {
+            "dataset_id": "x",
+            "attachments": [{"url": "https://x/f.inconnu", "mimetype": "application/x-mystere"}],
+        }
+        appels = []
+        medias, fichiers, avertissements = construire_medias(
+            dataset, "local-id", self.url, MODE_LIEN,
+            empreinte_distante=lambda *a, **k: appels.append(1),
+        )
+        self.assertEqual(appels, [])  # jamais appelé : mimetype hors énumération
+        self.assertEqual(medias[0]["media_type"], "SERVICE")
+        self.assertEqual(avertissements, [])
 
     def test_url_fiche(self):
         self.assertEqual(
@@ -105,15 +147,16 @@ class TestExportsStandardsRepli(unittest.TestCase):
         entrees = entrees_donnees(dataset, self.url)
         self.assertEqual([e["origine"] for e in entrees], ["alternative_export"])
 
-    def test_services_resultants_en_mode_lien(self):
+    def test_exports_standards_deviennent_des_file_hybrides_en_mode_lien(self):
         dataset = _fix("dataset_sans_export_curate_geo.json")
         medias, fichiers, avertissements = construire_medias(
             dataset, "local-id", self.url, MODE_LIEN,
+            empreinte_distante=_empreinte_ok,
         )
         self.assertEqual(fichiers, [])
         self.assertEqual(avertissements, [])
         self.assertEqual(len(medias), 2)
-        self.assertTrue(all(m["media_type"] == "SERVICE" for m in medias))
+        self.assertTrue(all(m["media_type"] == "FILE" for m in medias))
         self.assertTrue(all(m["connector"]["interface_contract"] == "dwnl" for m in medias))
 
 
