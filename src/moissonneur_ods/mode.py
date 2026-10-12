@@ -88,8 +88,31 @@ def _media_file(media_id: str, nom: str, caption: str) -> dict:
     }
 
 
+def _exports_standards(dataset: dict, url_plateforme: str, dataset_id: str) -> list[dict]:
+    """Entrées dérivées des exports standards Opendatasoft (``/exports/{format}``),
+    en repli quand ``alternative_exports`` est vide — ce qui est le cas pour la
+    quasi-totalité des JDD réels (vérifié sur plusieurs plateformes) :
+    ``attachments``/``alternative_exports`` sont des champs **curatés par le
+    producteur** (documents annexes, formats alternatifs explicitement choisis),
+    rarement remplis, alors que l'API Explore v2.1 expose systématiquement — pour
+    tout JDD avec des enregistrements — un export CSV/GeoJSON/etc. qui est déjà
+    un **vrai fichier plat téléchargeable** (``Content-Disposition: attachment``,
+    ``Content-Type`` correct), pas une réponse d'API paginée. Toujours CSV ; +
+    GeoJSON si le JDD a une composante géographique (``features`` contient
+    ``"geo"``, vérifié directement sur l'API ODS)."""
+    if not dataset.get("has_records"):
+        return []
+    base = f"{url_plateforme.rstrip('/')}/api/explore/v2.1/catalog/datasets/{dataset_id}/exports"
+    formats = [("csv", "text/csv", "Export CSV")]
+    if "geo" in (dataset.get("features") or []):
+        formats.append(("geojson", "application/geo+json", "Export GeoJSON"))
+    return [{"url": f"{base}/{fmt}", "titre": titre, "mimetype": mime, "origine": "export_standard"}
+           for fmt, mime, titre in formats]
+
+
 def entrees_donnees(dataset: dict, url_plateforme: str) -> list[dict]:
-    """Entrées de données d'un JDD ODS : pièces jointes puis exports alternatifs."""
+    """Entrées de données d'un JDD ODS : pièces jointes, puis exports alternatifs
+    (ou, à défaut, exports standards Opendatasoft — voir ``_exports_standards``)."""
     entrees: list[dict] = []
     for att in dataset.get("attachments") or []:
         if not isinstance(att, dict):
@@ -103,9 +126,9 @@ def entrees_donnees(dataset: dict, url_plateforme: str) -> list[dict]:
             "mimetype": att.get("mimetype"),
             "origine": "attachment",
         })
-    for exp in dataset.get("alternative_exports") or []:
-        if not isinstance(exp, dict):
-            continue
+    exports_curates = [exp for exp in (dataset.get("alternative_exports") or [])
+                       if isinstance(exp, dict)]
+    for exp in exports_curates:
         url = _url_absolue(exp.get("url") or "", url_plateforme)
         if not url:
             continue
@@ -115,6 +138,10 @@ def entrees_donnees(dataset: dict, url_plateforme: str) -> list[dict]:
             "mimetype": exp.get("mimetype"),
             "origine": "alternative_export",
         })
+    if not exports_curates:
+        dataset_id = dataset.get("dataset_id") or dataset.get("id")
+        if dataset_id:
+            entrees.extend(_exports_standards(dataset, url_plateforme, dataset_id))
     return entrees
 
 

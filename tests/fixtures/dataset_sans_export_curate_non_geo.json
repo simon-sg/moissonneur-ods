@@ -1,0 +1,19 @@
+{
+  "dataset_id": "mariages-noyal-chatillon-sur-seiche",
+  "has_records": true,
+  "features": ["analyze"],
+  "attachments": [],
+  "alternative_exports": [],
+  "metas": {
+    "default": {
+      "title": "Mariages - Noyal-Châtillon-sur-Seiche",
+      "description": "<p>Liste des mariages.</p>",
+      "theme": ["Citoyenneté"],
+      "keyword": ["mariages"],
+      "license": "Licence Ouverte",
+      "language": "fr",
+      "modified": "2021-02-19T10:54:53+00:00",
+      "publisher": "Ville de Noyal-Châtillon-sur-Seiche"
+    }
+  }
+}

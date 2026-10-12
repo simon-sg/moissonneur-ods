@@ -63,6 +63,60 @@ class TestModeLien(unittest.TestCase):
         self.assertEqual(origines, ["attachment", "attachment", "alternative_export"])
 
 
+class TestExportsStandardsRepli(unittest.TestCase):
+    """Cas réel très majoritaire : attachments/alternative_exports vides (champs
+    curatés par le producteur, rarement remplis) — repli sur les exports
+    standards Opendatasoft (/exports/{format}), qui sont déjà de vrais fichiers
+    plats téléchargeables (Content-Disposition: attachment), pas une réponse
+    d'API paginée."""
+
+    def setUp(self):
+        self.url = "https://data.rennesmetropole.fr"
+
+    def test_jdd_geo_sans_export_curate_obtient_csv_et_geojson(self):
+        dataset = _fix("dataset_sans_export_curate_geo.json")
+        entrees = entrees_donnees(dataset, self.url)
+        self.assertEqual([e["origine"] for e in entrees],
+                         ["export_standard", "export_standard"])
+        urls = [e["url"] for e in entrees]
+        self.assertEqual(urls, [
+            "https://data.rennesmetropole.fr/api/explore/v2.1/catalog/datasets/"
+            "massifs-de-rosiers-du-jardin-du-thabor/exports/csv",
+            "https://data.rennesmetropole.fr/api/explore/v2.1/catalog/datasets/"
+            "massifs-de-rosiers-du-jardin-du-thabor/exports/geojson",
+        ])
+
+    def test_jdd_non_geo_sans_export_curate_obtient_seulement_csv(self):
+        dataset = _fix("dataset_sans_export_curate_non_geo.json")
+        entrees = entrees_donnees(dataset, self.url)
+        self.assertEqual([e["origine"] for e in entrees], ["export_standard"])
+        self.assertTrue(entrees[0]["url"].endswith("/exports/csv"))
+
+    def test_sans_has_records_aucun_export_standard(self):
+        dataset = {"dataset_id": "vide", "attachments": [], "alternative_exports": []}
+        self.assertEqual(entrees_donnees(dataset, self.url), [])
+
+    def test_export_curate_present_desactive_le_repli(self):
+        dataset = _fix("dataset_sans_export_curate_geo.json")
+        dataset = dict(dataset, alternative_exports=[
+            {"id": "shp", "title": "Export Shapefile",
+            "url": "https://data.rennesmetropole.fr/.../exports/shp"},
+        ])
+        entrees = entrees_donnees(dataset, self.url)
+        self.assertEqual([e["origine"] for e in entrees], ["alternative_export"])
+
+    def test_services_resultants_en_mode_lien(self):
+        dataset = _fix("dataset_sans_export_curate_geo.json")
+        medias, fichiers, avertissements = construire_medias(
+            dataset, "local-id", self.url, MODE_LIEN,
+        )
+        self.assertEqual(fichiers, [])
+        self.assertEqual(avertissements, [])
+        self.assertEqual(len(medias), 2)
+        self.assertTrue(all(m["media_type"] == "SERVICE" for m in medias))
+        self.assertTrue(all(m["connector"]["interface_contract"] == "dwnl" for m in medias))
+
+
 class TestModeCopie(unittest.TestCase):
     def setUp(self):
         self.url = "https://data.rennesmetropole.fr"
