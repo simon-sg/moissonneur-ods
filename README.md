@@ -190,6 +190,27 @@ confirmé correct dans les sources `rudi-catalog`, mais une validation
 bout-en-bout réelle (provoquer un rapport, voir `organization_status` passer
 à `VALIDATED`, observer le renvoi automatique) reste à faire.
 
+### Supprimer des ressources déjà poussées côté portail
+
+`--reinitialiser-noeud` ne touche **jamais** le portail (voir plus haut) : une
+fois des ressources poussées via `--renvoyer-ressources`, ce sont deux copies
+indépendantes. Pour les supprimer aussi côté portail :
+
+```bash
+python3 -m moissonneur_ods --rudi-conf conf/rudi_node.json \
+    --supprimer-ressources-portail
+# Taper SUPPRIMER-PORTAIL pour confirmer
+```
+
+`DELETE {portail}/kalim/v1/resources/{global_id}` (même authentification
+robot que le push) — **asynchrone** comme le push : crée une demande
+d'intégration traitée ensuite par le planificateur Kalim, pas une
+suppression instantanée (voir mémoire `project_kalim_scheduler_lenteur` : la
+file peut être lente par défaut). Par défaut, lit les `global_id` depuis le
+nœud local ; si le nœud a déjà été réinitialisé localement (donc plus aucune
+trace des ressources à supprimer), fournir `--global-ids-fichier
+<chemin.json>` (format `{"global_ids": [...]}`).
+
 ## Tester bout-en-bout contre plusieurs plateformes ODS
 
 `--reinitialiser-noeud` vide le contenu local d'un nœud (ressources +
