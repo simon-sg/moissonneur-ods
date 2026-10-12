@@ -156,6 +156,40 @@ traitement d'un autre nœud. Vérification (après quelques minutes) :
 curl -s 'http://rudi.localhost/konsult/v1/datasets/metadatas?limit=1&offset=0'  # champ total
 ```
 
+### Renvoi automatique une fois les organisations validées
+
+Workflow normal RUDI : créer les producteurs → ajouter les JDD → les envoyer →
+refusés tant que leur organisation n'est pas validée côté portail (normal) →
+une fois validée, les renvoyer. La dernière étape peut être automatisée :
+
+```bash
+python3 -m moissonneur_ods --rudi-conf conf/rudi_node.json \
+    --renvoyer-si-organisations-validees
+```
+
+Détecte les organisations venant d'être validées via le **rapport portail**
+que le nœud reçoit quand un humain valide dans l'UI Strukture
+(`organization_status=VALIDATED` sur `/catalog/v1/organizations`, côté
+rudi-catalog : `reportController.treatOrgnizationsReports`, alimenté par
+`PUT {noeud}/organizations/:id/report`), et renvoie uniquement les ressources
+qui leur sont rattachées (`producer.organization_id`) — jamais tout le
+catalogue. **Aucune confirmation interactive** (contrairement à
+`--renvoyer-ressources`) : la portée est automatiquement restreinte, le push
+reste idempotent, et c'est exactement l'automatisation visée — pensé pour un
+cron ou un run périodique. Un fichier d'état
+(`etat_organisations_validees.json`) retient les organisations déjà traitées
+pour ne pas les retraiter à chaque exécution.
+
+Point de vigilance non résolu à ce jour : sur le nœud de test `rudinode-ods`,
+`organization_status` n'est renseigné sur **aucune** des 15 organisations
+alors que toutes sont déjà validées côté portail (vérifié par requête directe
+sur l'API Strukture) — le rapport portail ne semble pas être parvenu au nœud,
+pour une raison non identifiée (câblage portail, délai, ou mécanisme qui ne se
+déclenche pas comme attendu). Le code de détection (`organization_status`) est
+confirmé correct dans les sources `rudi-catalog`, mais une validation
+bout-en-bout réelle (provoquer un rapport, voir `organization_status` passer
+à `VALIDATED`, observer le renvoi automatique) reste à faire.
+
 ## Tester bout-en-bout contre plusieurs plateformes ODS
 
 `--reinitialiser-noeud` vide le contenu local d'un nœud (ressources +

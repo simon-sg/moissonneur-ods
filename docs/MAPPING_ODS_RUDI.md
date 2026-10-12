@@ -31,9 +31,12 @@ La traduction lit trois emplacements du JDD ODS :
 | `keywords` | `metas.default.keyword[]` + thèmes ODS restants | Mots-clés ODS + tous les libellés de thème non utilisés comme thème principal | oui |
 | `producer.organization_name` | `metas.default.publisher` | Producteur ; repli sur le nom d'hôte de la plateforme | oui |
 | `contacts` | — | Aucune donnée de contact fiable côté ODS : liste vide, le nœud crée un contact de repli au nom du producteur | non |
-| `dataset_dates.updated` | `metas.default.modified` | Date ISO 8601, normalisée UTC — sert **aussi** de marqueur `dataset_a_change()` (incrémental) | non |
+| `dataset_dates.created` **et** `dataset_dates.updated` | `metas.default.modified` | Date ISO 8601, normalisée UTC, **les deux identiques** — sert **aussi** de marqueur `dataset_a_change()` (incrémental). Les deux, jamais une seule : le nœud (`checkDates`, rudi-catalog) donne un défaut `nowISO()` à `created` s'il est seul absent, ce qui écraserait silencieusement la vraie date source par l'heure du harvest. ODS n'expose qu'un seul repère temporel fiable (`modified`), jamais de vraie date de création distincte | non |
 | `available_formats` | `attachments[]` + `alternative_exports[]` | Un média par entrée, selon le mode (`SERVICE` lien / `FILE` copie) ; + `source-data` et `source-metadata` vers la fiche ODS | dérivé |
 | `access_condition.licence` | `metas.default.license` + `license_url` | Voir `translation/licences.py` : STANDARD (ODbL, Etalab), CUSTOM (libellé inconnu, passthrough), ou repli configurable | oui (toujours une valeur, repli signalé) |
+| `resource_languages` | `metas.default.language` | Code ISO 639-1 ODS (ex. `fr`) repris tel quel dans une liste à un élément | non (champ omis si absent) |
+| `dataset_update_frequency` | `metas.default.update_frequency` | Voir `translation/frequences.py` : libellé déjà un code RUDI (`monthly`…) repris tel quel, libellé français connu mappé (table d'alias), libellé inconnu → repli `unknown` + avertissement — jamais deviné silencieusement | non (champ omis si absent) |
+| `keywords` (complément) | `metas.default.territory[]` + `metas.default.geographic_reference[]` | Pas de champ RUDI dédié au territoire : versés en mots-clés plutôt que perdus, même logique que les libellés de thème non retenus comme thème principal | non |
 | `geography` | — | Non déduit de façon silencieuse ; jamais injecté. (Aucun équivalent fiable côté ODS en v1.) | non |
 | `collection_tag` | — | `moissonneur-ods:<url_plateforme>` — périmètre de la détection d'orphelins | oui (marquage moissonneur) |
 
@@ -61,3 +64,7 @@ La traduction lit trois emplacements du JDD ODS :
    (jamais `metadata_info`, dont le schéma fermé perdrait le marqueur). Seuls les
    datasets du nœud portant ce tag peuvent être proposés à la suppression, après saisie
    exacte `SUPPRIMER`.
+6. **Champs ODS délibérément non repris** : `metas.default.records_count` (statistique
+   vivante côté plateforme, pas une métadonnée descriptive — aucun champ RUDI
+   pertinent) et `metas.default.attributions` (libellé de crédit libre, sans équivalent
+   RUDI évident) ne sont pas mappés. Absence volontaire, pas un oubli.
