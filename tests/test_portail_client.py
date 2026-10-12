@@ -285,31 +285,30 @@ class TestRenvoyerRessources(unittest.TestCase):
 
 
 class TestSupprimerRessourcesPortail(unittest.TestCase):
-    def test_delete_par_global_id_avec_renouvellement_token(self):
-        appels = []
-
-        def fake_requete(url, methode="GET", corps=None, entetes=None, brut=None, timeout=60):
-            appels.append((methode, url))
-            if url.endswith("/oauth2/token"):
-                return 200, json.dumps({"access_token": "tok"})
-            if url.endswith("/kalim/v1/resources/g1"):
-                return 200, ""
-            if url.endswith("/kalim/v1/resources/g2"):
-                return 404, "introuvable"
-            raise AssertionError(f"appel inattendu : {methode} {url}")
-
+    def test_delegue_au_toolkit_et_agrege_le_bilan(self):
         creds = {"portal_url": "http://portail.test", "node_uuid": "node-1",
                  "node_login": "node-1", "node_password": "pw"}
-        with mock.patch.object(portail_client, "_requete", side_effect=fake_requete), \
+        suppressions = []
+
+        def fake_delete(url, **kwargs):
+            suppressions.append(url)
+            return FakeResponse(200 if url.endswith("/g1") else 404,
+                                text="" if url.endswith("/g1") else "introuvable")
+
+        with mock.patch("rudi_harvest_toolkit.rudi_client.session") as sess, \
+             mock.patch("rudi_harvest_toolkit.rudi_client.time.sleep"), \
              mock.patch.object(portail_client.time, "sleep"):
+            sess.post.return_value = FakeResponse(200, payload={"access_token": "tok"})
+            sess.delete.side_effect = fake_delete
             bilan = supprimer_ressources_portail(creds, ["g1", "g2"])
 
         self.assertEqual(bilan, {"DELETE": 1, "echec": 1})
-        methodes_delete = [(m, u) for m, u in appels if m == "DELETE"]
-        self.assertEqual(methodes_delete, [
-            ("DELETE", "http://portail.test/kalim/v1/resources/g1"),
-            ("DELETE", "http://portail.test/kalim/v1/resources/g2"),
+        self.assertEqual(suppressions, [
+            "http://portail.test/kalim/v1/resources/g1",
+            "http://portail.test/kalim/v1/resources/g2",
         ])
+        # même en-tête d'auth que le push (compte ROBOT), via le toolkit
+        self.assertEqual(sess.delete.call_args.kwargs["headers"]["Authorization"], "Bearer tok")
 
     def test_aucun_global_id_leve_erreur(self):
         creds = {"portal_url": "http://portail.test", "node_uuid": "n",

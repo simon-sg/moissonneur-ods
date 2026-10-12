@@ -57,7 +57,11 @@ from urllib.parse import urlparse
 
 import requests
 
-from rudi_harvest_toolkit.rudi_client import lister_organisations, url_catalog
+from rudi_harvest_toolkit.rudi_client import (
+    lister_organisations,
+    supprimer_dataset_portail,
+    url_catalog,
+)
 
 CREATED = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
 
@@ -562,6 +566,12 @@ def supprimer_ressources_portail(credentials: dict, global_ids: list[str]) -> di
     nœud), seulement les ``global_id``. Utile en particulier quand le nœud source a
     déjà été réinitialisé localement (``--reinitialiser-noeud``) et qu'il ne reste
     donc aucune trace locale des ressources à faire disparaître côté portail.
+
+    **Délègue à ``rudi_harvest_toolkit.rudi_client.supprimer_dataset_portail()``**
+    (foyer canonique, partagé avec ``moissonneuse-batteuse``) : même endpoint, même
+    renouvellement de token sur 401. Cette fonction ne fait plus que le bouclage et
+    l'agrégation du bilan ``{"DELETE": …, "echec": …}``, avec la pause ``PAUSE_S``
+    entre deux appels.
     """
     if not global_ids:
         raise ErreurRaccordement("Aucun global_id à supprimer côté portail.")
@@ -569,23 +579,16 @@ def supprimer_ressources_portail(credentials: dict, global_ids: list[str]) -> di
     login = credentials.get("node_login") or credentials["node_uuid"]
     password = credentials["node_password"]
     print(f"{len(global_ids)} ressource(s) à supprimer directement côté Kalim...")
-    token = obtenir_token_robot(portal_url, login, password)
+    # ``usr``/``pwd`` renseignés en plus de ``usr_portail``/``pwd_portail`` : le repli
+    # du toolkit les lit inconditionnellement (``conf.get("usr_portail", conf["usr"])``).
+    conf = {"url_portail": portal_url, "usr_portail": login, "pwd_portail": password,
+            "usr": login, "pwd": password}
     bilan = {"DELETE": 0, "echec": 0}
-
     for n, gid in enumerate(global_ids, 1):
-        statut, texte = _requete(
-            f"{portal_url}/kalim/v1/resources/{gid}", "DELETE",
-            entetes={"Authorization": f"Bearer {token}"})
-        if statut == 401:  # token expiré : renouveler et rejouer
-            token = obtenir_token_robot(portal_url, login, password)
-            statut, texte = _requete(
-                f"{portal_url}/kalim/v1/resources/{gid}", "DELETE",
-                entetes={"Authorization": f"Bearer {token}"})
-        if statut == 200:
+        if supprimer_dataset_portail(conf, gid):
             bilan["DELETE"] += 1
-            print(f"  [{n}/{len(global_ids)}] DELETE OK — {gid}", flush=True)
         else:
             bilan["echec"] += 1
-            print(f"  [{n}/{len(global_ids)}] DELETE {statut} — {gid} : {texte[:150]}", flush=True)
         time.sleep(PAUSE_S)
+    print(f"Bilan suppression portail : {bilan}")
     return bilan
