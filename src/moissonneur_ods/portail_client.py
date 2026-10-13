@@ -61,6 +61,7 @@ from rudi_harvest_toolkit.rudi_client import (
     lister_organisations,
     marquer_organisations_traitees,
     organisations_nouvellement_validees,
+    renvoyer_ressources_connues,
     ressources_pour_organisations,
     supprimer_dataset_portail,
     url_catalog,
@@ -454,61 +455,37 @@ def portal_ready(m: dict) -> dict:
 
 
 def renvoyer_ressources(credentials: dict, conf_rudi: dict, metadonnees: list[dict]) -> dict:
-    """Pousse toutes les ressources du nœud vers le portail (Kalim), en direct.
+    """Renvoie des ressources déjà publiées sur le nœud vers le portail, en PUTant la
+    métadonnée telle quelle sur la route producteur normale du nœud (``PUT
+    /catalog/v1/resources``, via ``rudi_harvest_toolkit.rudi_client.
+    renvoyer_ressources_connues(conf_rudi, metadonnees)``) — **jamais** en direct vers
+    Kalim avec le compte ROBOT du portail, et **jamais** la route admin du nœud
+    (``/catalog/admin/portal/resources/send``, auth incompatible avec un profil
+    producteur + auto-saturante, bug D2). Un producteur/moissonneur dépose sur son
+    nœud, point : c'est le nœud lui-même (``overwriteMetadata`` → ``sendToPortal`` →
+    ``sendMetadataToPortal`` côté ``rudi-catalog``) qui relaie ensuite vers le
+    portail — la ressource est déjà PUT-compatible (dict brut tel que renvoyé par le
+    nœud), aucune transformation ``portal_ready()`` n'est donc nécessaire ici.
 
-    Reprise de repousser_metadonnees.py : GET de la fiche sur le nœud,
-    transformation ``portal_ready()``, puis POST (ou PUT si déjà au catalogue
-    portail) sur ``{portal_url}/kalim/v1/resources`` avec le compte ROBOT du nœud.
-    Jamais l'endpoint nœud ``/catalog/admin/portal/resources/send`` (auth
-    incompatible + auto-saturant, bug D2). Rythme ``PAUSE_S`` entre requêtes.
-    Retourne le bilan ``{"POST":…, "PUT":…, "echec":…}``.
+    ``credentials`` n'est plus utilisé par cette fonction (conservé dans la
+    signature pour ne pas casser les appelants existants) — le push ne passe plus
+    par le compte ROBOT du portail, seulement par les identifiants manager du nœud
+    (``conf_rudi``).
+
+    Retourne le bilan du toolkit : ``{"ok": n, "echecs": [(global_id, erreur), ...]}``.
     """
-    portal_url = credentials["portal_url"]
-    login = credentials.get("node_login") or credentials["node_uuid"]
-    password = credentials["node_password"]
-    node_catalog = f"{url_catalog(conf_rudi)}/v1"
-
-    ids = [m.get("global_id") for m in metadonnees if m.get("global_id")]
-    if not ids:
+    if not metadonnees:
         raise ErreurRaccordement("Aucune ressource avec global_id à renvoyer.")
-    print(f"{len(ids)} ressources à pousser directement vers Kalim...")
-    token = obtenir_token_robot(portal_url, login, password)
-    bilan = {"POST": 0, "PUT": 0, "echec": 0}
-
-    for n, gid in enumerate(ids, 1):
-        statut, texte = _requete(f"{node_catalog}/resources/{gid}")
-        if statut != 200:
-            print(f"  [{n}/{len(ids)}] {gid} : GET nœud {statut} — ignoré")
-            bilan["echec"] += 1
-            continue
-        fiche = portal_ready(json.loads(texte))
-        titre = fiche.get("resource_title", "?")[:55]
-
-        # PUT si la fiche est déjà au catalogue portail, POST sinon
-        deja, _ = _requete(f"{portal_url}/konsult/v1/datasets/{gid}/metadatas",
-                           entetes={"Authorization": f"Bearer {token}"})
-        methode = "PUT" if deja == 200 else "POST"
-
-        statut, texte = _requete(
-            f"{portal_url}/kalim/v1/resources", methode, corps=fiche,
-            entetes={"Authorization": f"Bearer {token}"})
-        if statut == 401:  # token expiré : renouveler et rejouer
-            token = obtenir_token_robot(portal_url, login, password)
-            statut, texte = _requete(
-                f"{portal_url}/kalim/v1/resources", methode, corps=fiche,
-                entetes={"Authorization": f"Bearer {token}"})
-        if statut == 200:
-            bilan[methode] += 1
-            print(f"  [{n}/{len(ids)}] {methode} OK — {titre}", flush=True)
-        else:
-            bilan["echec"] += 1
-            print(f"  [{n}/{len(ids)}] {methode} {statut} — {titre} : "
-                  f"{texte[:150]}", flush=True)
-        time.sleep(PAUSE_S)
-
+    print(f"{len(metadonnees)} ressource(s) à renvoyer — PUT producteur normal sur le "
+          f"nœud (un par un, pause {PAUSE_S}s entre chaque)...")
+    bilan = renvoyer_ressources_connues(conf_rudi, metadonnees, pause_s=PAUSE_S)
     print(f"\nBilan des envois : {bilan}")
+    for gid, err in bilan["echecs"]:
+        print(f"  ERREUR {gid} : {err}")
     print("Le traitement Kalim et les rapports vers le nœud sont asynchrones.")
     print("Contrôles (attendre quelques minutes) :")
+    portal_url = credentials["portal_url"]
+    node_catalog = f"{url_catalog(conf_rudi)}/v1"
     print(f"  - catalogue portail : curl -s '{portal_url}/konsult/v1/datasets/metadatas?limit=1&offset=0'  "
           "(champ total)")
     print(f"  - statuts nœud : curl -s '{node_catalog}/resources?limit=1'  (champ total)")

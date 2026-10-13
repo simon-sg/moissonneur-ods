@@ -236,45 +236,23 @@ class TestPortalReady(unittest.TestCase):
 
 
 class TestRenvoyerRessources(unittest.TestCase):
-    def test_post_et_put_selon_presence_portail(self):
-        appels = []
-
-        def fake_requete(url, methode="GET", corps=None, entetes=None, brut=None, timeout=60):
-            appels.append((methode, url, corps))
-            if url.endswith("/oauth2/token"):
-                return 200, json.dumps({"access_token": "tok"})
-            if url.endswith("/resources/g1"):
-                return 200, json.dumps({"resource_title": "T1",
-                                        "metadata_info": {"metadata_dates": {}},
-                                        "metadata_status": "published", "available_formats": []})
-            if "/datasets/g1/metadatas" in url:
-                return 404, ""
-            if url.endswith("/resources/g2"):
-                return 200, json.dumps({"resource_title": "T2",
-                                        "metadata_info": {"metadata_dates": {}},
-                                        "metadata_status": "published", "available_formats": []})
-            if "/datasets/g2/metadatas" in url:
-                return 200, "{}"
-            if url.endswith("/kalim/v1/resources"):
-                return 200, ""
-            raise AssertionError(f"appel inattendu : {methode} {url}")
-
+    def test_delegue_au_toolkit_avec_conf_rudi(self):
+        """renvoyer_ressources() ne doit plus jamais parler à Kalim en direct avec le
+        compte ROBOT du portail — elle délègue à renvoyer_ressources_connues() du
+        toolkit, qui PUT chaque ressource sur la route producteur normale du nœud."""
         creds = {"portal_url": "http://portail.test", "node_uuid": "node-1",
                  "node_login": "node-1", "node_password": "pw"}
+        conf_rudi = {"url": "http://node:3032", "usr": "u", "pwd": "p"}
         metas = [{"global_id": "g1"}, {"global_id": "g2"}]
-        with mock.patch.object(portail_client, "_requete", side_effect=fake_requete), \
-             mock.patch.object(portail_client, "url_catalog",
-                               return_value="http://node:3030/catalog"), \
-             mock.patch.object(portail_client.time, "sleep"):
-            bilan = renvoyer_ressources(creds, {"url": "http://node:3032"}, metas)
+        with mock.patch.object(portail_client, "renvoyer_ressources_connues") as renvoyer, \
+             mock.patch.object(portail_client, "url_catalog", return_value="http://node:3030/catalog"):
+            renvoyer.return_value = {"ok": 2, "echecs": []}
+            bilan = renvoyer_ressources(creds, conf_rudi, metas)
 
-        self.assertEqual(bilan, {"POST": 1, "PUT": 1, "echec": 0})
-        methodes = [m for m, u, _ in appels if u.endswith("/kalim/v1/resources")]
-        self.assertEqual(methodes, ["POST", "PUT"])
-        corps_post = next(c for m, u, c in appels
-                          if u.endswith("/kalim/v1/resources") and m == "POST")
-        self.assertEqual(corps_post["metadata_info"]["api_version"], "1.4.1")
-        self.assertNotIn("metadata_status", corps_post)
+        self.assertEqual(bilan, {"ok": 2, "echecs": []})
+        renvoyer.assert_called_once_with(conf_rudi, metas, pause_s=mock.ANY)
+        # jamais de credentials/token portail transmis à l'appel de renvoi lui-même
+        self.assertNotIn("credentials", renvoyer.call_args.kwargs)
 
     def test_aucune_ressource_leve_erreur(self):
         creds = {"portal_url": "http://portail.test", "node_uuid": "n",

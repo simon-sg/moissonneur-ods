@@ -137,10 +137,15 @@ Une fois le `.ini` appliqué et le conteneur nœud redémarré (scénario `peupl
 python3 -m moissonneur_ods --rudi-conf conf/rudi_node.json --renvoyer-ressources
 ```
 
-`--renvoyer-ressources` pousse les ressources du nœud **directement** vers Kalim
-(`{portail}/kalim/v1/resources`, POST ou PUT selon présence déjà au catalogue), avec
-le compte ROBOT du nœud — jamais via l'endpoint nœud
-`/catalog/admin/portal/resources/send` (auth incompatible + auto-saturant, bug D2).
+`--renvoyer-ressources` renvoie chaque ressource en la PUTant telle quelle sur la route
+**producteur normale** du nœud (`PUT /catalog/v1/resources`, via
+`rudi_harvest_toolkit.rudi_client.renvoyer_ressources_connues()`) — **jamais** en direct
+vers Kalim avec le compte ROBOT du portail (ce que faisait cet outil jusqu'au 2026-10-13),
+et **jamais** non plus l'endpoint nœud `/catalog/admin/portal/resources/send` (qui exige un
+profil — `rudi_api_pm`/Postman — qu'aucun harvester/producteur ne doit détenir, même si
+cette route « marche » en dev faute d'authentification appliquée). Un producteur normal
+dépose sur son nœud, c'est tout : c'est le nœud lui-même qui relaie ensuite vers Kalim, de la
+même façon que pour n'importe quelle publication normale.
 
 **Les organisations référencées (`producer.organization_id`) n'ont besoin d'aucune
 action manuelle en base** : confirmé en conditions réelles le 2026-10-11, quand Kalim
@@ -213,8 +218,9 @@ python3 -m moissonneur_ods --rudi-conf conf/rudi_node.json \
 # Taper SUPPRIMER-PORTAIL pour confirmer
 ```
 
-`DELETE {portail}/kalim/v1/resources/{global_id}` (même authentification
-robot que le push) — **asynchrone** comme le push : crée une demande
+`DELETE {portail}/kalim/v1/resources/{global_id}` (authentification robot du portail —
+légitime ici, la suppression portail n'est pas un dépôt producteur) — **asynchrone**
+comme le push : crée une demande
 d'intégration traitée ensuite par le planificateur Kalim, pas une
 suppression instantanée (voir mémoire `project_kalim_scheduler_lenteur` : la
 file peut être lente par défaut). Par défaut, lit les `global_id` depuis le
