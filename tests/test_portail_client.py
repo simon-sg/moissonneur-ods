@@ -323,7 +323,7 @@ class TestOrganisationsNouvellementValidees(unittest.TestCase):
             chemin_etat = os.path.join(d, "etat_organisations_validees.json")
             with open(chemin_etat, "w", encoding="utf-8") as f:
                 json.dump({"organisations_traitees": ["org-1"]}, f)
-            with mock.patch.object(portail_client, "lister_organisations",
+            with mock.patch("rudi_harvest_toolkit.rudi_client.lister_organisations",
                                    return_value=[{"organization_id": "org-1"},
                                                 {"organization_id": "org-2"}]):
                 self.assertEqual(
@@ -334,7 +334,7 @@ class TestOrganisationsNouvellementValidees(unittest.TestCase):
     def test_aucun_etat_prealable_retourne_toutes_les_validees(self):
         with tempfile.TemporaryDirectory() as d:
             chemin_etat = os.path.join(d, "etat_organisations_validees.json")
-            with mock.patch.object(portail_client, "lister_organisations",
+            with mock.patch("rudi_harvest_toolkit.rudi_client.lister_organisations",
                                    return_value=[{"organization_id": "org-9"}]):
                 self.assertEqual(
                     organisations_nouvellement_validees({"url": "http://n:3032"}, chemin_etat),
@@ -344,7 +344,7 @@ class TestOrganisationsNouvellementValidees(unittest.TestCase):
     def test_ne_modifie_pas_le_fichier_etat(self):
         with tempfile.TemporaryDirectory() as d:
             chemin_etat = os.path.join(d, "etat_organisations_validees.json")
-            with mock.patch.object(portail_client, "lister_organisations",
+            with mock.patch("rudi_harvest_toolkit.rudi_client.lister_organisations",
                                    return_value=[{"organization_id": "org-1"}]):
                 organisations_nouvellement_validees({"url": "http://n:3032"}, chemin_etat)
             self.assertFalse(os.path.isfile(chemin_etat))
