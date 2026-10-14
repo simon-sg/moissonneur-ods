@@ -1,6 +1,5 @@
 """Tests unitaires de portail_client (mocks HTTP, zéro appel réseau)."""
 import base64
-import copy
 import json
 import os
 import tempfile
@@ -18,7 +17,6 @@ from moissonneur_ods.portail_client import (
     marquer_organisations_traitees,
     obtenir_token_admin,
     organisations_nouvellement_validees,
-    portal_ready,
     raccorder,
     renvoyer_ressources,
     ressources_pour_organisations,
@@ -208,31 +206,6 @@ class TestIniPortail(unittest.TestCase):
         self.assertIn("is_pwd_b64 = true", contenu)
         attendu = base64.b64encode(b"p@s s").decode()
         self.assertIn(f'passw = "{attendu}"', contenu)
-
-
-class TestPortalReady(unittest.TestCase):
-    def test_dedoublonne_et_corrige_connecteurs_geo(self):
-        out = portal_ready(copy.deepcopy(self._fiche()))
-        self.assertEqual(out["metadata_info"]["api_version"], "1.4.1")
-        self.assertEqual(len(out["available_formats"]), 1)
-        self.assertEqual(out["available_formats"][0]["connector"]["connector_parameters"],
-                         [{"key": "versions", "value": "2.0.0"}])
-        self.assertNotIn("metadata_status", out)
-        self.assertNotIn("restricted_access", out)
-
-    @staticmethod
-    def _fiche():
-        return {
-            "metadata_info": {"metadata_dates": {"published": "x"}},
-            "metadata_status": "published",
-            "restricted_access": True,
-            "available_formats": [
-                {"media_id": "m1", "media_type": "SERVICE",
-                 "connector": {"interface_contract": "wfs", "connector_parameters": []}},
-                {"media_id": "m1", "media_type": "SERVICE",
-                 "connector": {"interface_contract": "wfs", "connector_parameters": []}},
-            ],
-        }
 
 
 class TestRenvoyerRessources(unittest.TestCase):

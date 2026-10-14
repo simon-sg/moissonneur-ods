@@ -21,11 +21,13 @@ script de référence, toutes documentées dans le plan de raccordement
   n'ait validé que le compte ROBOT peut obtenir un token.
 
 Le module embarque aussi ``renvoyer_ressources`` pour le scénario « nœud déjà
-peuplé » : adaptation de
-``rudi-portal-local/raccordement/repousser_metadonnees.py`` — pousse toutes les
-ressources du nœud directement vers Kalim, contournant le pull cassé (bug A1),
-le renvoi natif du nœud silencieusement skippé (bug D1) et l'envoi en masse
-auto-saturant de ``/catalog/admin/portal/resources/send`` (bug D2).
+peuplé » : contourne le pull Kalim cassé (bug A1) et le renvoi natif du nœud
+silencieusement skippé (bug D1) en PUTant chaque ressource sur la route
+producteur normale du nœud (``rudi_harvest_toolkit.rudi_client.
+renvoyer_ressources_connues()``) — jamais en direct vers Kalim avec le compte
+ROBOT du portail, ni via l'envoi en masse auto-saturant de
+``/catalog/admin/portal/resources/send`` (bug D2). C'est le nœud lui-même qui
+relaie ensuite vers le portail, comme pour toute publication normale.
 
 **Procédure normale de validation des organisations (confirmée en conditions
 réelles le 2026-10-11)** : quand une ressource est poussée vers
@@ -48,8 +50,6 @@ import json
 import os
 import secrets
 import time
-import urllib.error
-import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -77,9 +77,6 @@ CREATED = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
 # Rythme entre deux envois de ressources vers Kalim (repris de
 # repousser_metadonnees.py) : ne pas reproduire la saturation décrite en bug D2.
 PAUSE_S = 0.5
-# Version d'API portail attendue par la validation Kalim (constApi.js du nœud),
-# injectée par la transformation ``portal_ready``.
-PORTAL_API_VERSION = "1.4.1"
 
 
 class ErreurRaccordement(Exception):
@@ -389,70 +386,6 @@ def generer_ini_portail(chemin: str, credentials: dict) -> None:
 # attente de validation humaine dans l'UI Strukture du portail — voir la
 # procédure documentée en tête de ce module. Aucune génération SQL.
 # ---------------------------------------------------------------------------
-
-def _requete(url, methode="GET", corps=None, entetes=None, brut=None, timeout=60):
-    """Requête HTTP simple (urllib), retourne ``(statut, texte)`` — repris à
-    l'identique de repousser_metadonnees.py."""
-    data = brut if brut is not None else (json.dumps(corps).encode() if corps is not None else None)
-    req = urllib.request.Request(url, data=data, method=methode, headers=entetes or {})
-    if corps is not None:
-        req.add_header("Content-Type", "application/json")
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as rep:
-            return rep.status, rep.read().decode(errors="replace")
-    except urllib.error.HTTPError as e:
-        return e.code, e.read().decode(errors="replace")
-
-
-def obtenir_token_robot(portal_url: str, login: str, password: str) -> str:
-    """Token OAuth2 avec les credentials du compte ROBOT du nœud."""
-    basic = base64.b64encode(f"{login}:{password}".encode()).decode()
-    corps = (f"grant_type=client_credentials&username={login}&password={password}").encode()
-    statut, texte = _requete(
-        f"{portal_url}/oauth2/token", "POST", brut=corps,
-        entetes={"Authorization": f"Basic {basic}",
-                 "Content-Type": "application/x-www-form-urlencoded"})
-    if statut != 200:
-        raise ErreurRaccordement(f"Échec token portail ({statut}) : {texte[:200]}")
-    return json.loads(texte)["access_token"]
-
-
-def portal_ready(m: dict) -> dict:
-    """Équivalent de ``toRudiPortalJSON`` (rudi-catalog Metadata.js) — repris
-    mot pour mot de repousser_metadonnees.py."""
-    m["metadata_info"]["api_version"] = PORTAL_API_VERSION
-    # Dédoublonnage media_id : Kalim crashe « Duplicate key <media_id>_<contract> »
-    # sur les fiches dont available_formats contient des doublons.
-    vus = set()
-    m["available_formats"] = [f for f in m.get("available_formats", [])
-                              if not (f.get("media_id") in vus or vus.add(f.get("media_id")))]
-    for media in m.get("available_formats", []):
-        if media.get("media_type") != "FILE":
-            media.pop("file_type", None)
-        media.pop("file_storage_status", None)
-        media.pop("file_status_update", None)
-        # Kalim NPE sur les contrats géo (wfs/wms/wmts) si connector_parameters
-        # est null — une liste vide est perdue à la re-sérialisation par la façade
-        # Kalim (inclusion NON_EMPTY), donc redevient null à la validation.
-        # `versions` (format X.Y.Z, cf. VersionsValidator) est le plus neutre.
-        conn = media.get("connector")
-        if conn is not None and not conn.get("connector_parameters"):
-            ic = (conn.get("interface_contract") or "").lower()
-            if ic in ("wfs", "wmts"):
-                conn["connector_parameters"] = [{"key": "versions", "value": "2.0.0"}]
-            elif ic == "wms":
-                conn["connector_parameters"] = [{"key": "versions", "value": "1.3.0"}]
-            else:
-                conn["connector_parameters"] = []
-    m.pop("integration_error_id", None)
-    m.pop("metadata_status", None)
-    m.get("metadata_info", {}).get("metadata_dates", {}).pop("published", None)
-    m.pop("restricted_access", None)
-    conf = m.get("access_condition", {}).get("confidentiality")
-    if conf and conf.get("gdpr_sensitive") is None:
-        conf.pop("gdpr_sensitive", None)
-    return m
-
 
 def renvoyer_ressources(credentials: dict, conf_rudi: dict, metadonnees: list[dict]) -> dict:
     """Renvoie des ressources déjà publiées sur le nœud vers le portail, en PUTant la
