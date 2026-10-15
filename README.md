@@ -150,12 +150,19 @@ même façon que pour n'importe quelle publication normale.
 **Les organisations référencées (`producer.organization_id`) n'ont besoin d'aucune
 action manuelle en base** : confirmé en conditions réelles le 2026-10-11, quand Kalim
 reçoit une ressource dont l'organisation est inconnue côté portail, il la crée
-automatiquement **avec le bon uuid** — un mécanisme différent de l'API admin
-`POST /strukture/v1/organizations` (qui, elle, ignore l'uuid imposé, bug C2 du
-rapport). L'organisation apparaît en attente de validation dans l'UI Strukture du
-portail ; **c'est à vous de la valider** — c'est le geste humain que cette
-procédure préserve volontairement, pas un oubli de l'outil. Une fois validée, les
-ressources qui la référencent peuvent être pleinement publiées.
+automatiquement **avec le bon uuid**. L'organisation apparaît en attente de validation
+dans l'UI Strukture du portail ; **c'est à vous de la valider** — c'est le geste humain
+que cette procédure préserve volontairement, pas un oubli de l'outil. Une fois validée,
+les ressources qui la référencent peuvent être pleinement publiées.
+
+Ce mécanisme ne concerne que `--renvoyer-ressources` (ressources déjà complètes, dont
+l'`organization_id` est en général déjà créé). La **moisson normale** (sans ce flag) crée
+l'organisation explicitement, en amont de toute publication, via le nœud lui-même
+(`rudi_harvest_toolkit.rudi_client.demander_creation_organisation()`, `POST
+{url_catalog}/organizations` — corrigé le 2026-10-15, plus l'ancienne API admin
+`POST /strukture/v1/organizations` qui ignorait l'uuid imposé, bug C2 du rapport) : les
+deux chemins aboutissent à la même file de validation Strukture, juste à des moments
+différents du cycle.
 
 Notes : le nœud est déclaré `harvestable=false` (le pull Kalim est bloquant sans
 contournement, bug A1) ; `notifiable=true` reste requis pour que le nœud puisse

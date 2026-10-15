@@ -291,9 +291,9 @@ def raccorder(cfg: ConfigRaccordement, credentials_existants: dict | None = None
     """Orchestre le raccordement producteur + nœud + compte ROBOT sur le portail.
 
     Idempotent (réutilise le mot de passe existant si le compte ROBOT existe déjà).
-    Retourne le dict credentials — il contient **explicitement** ``provider_uuid``
-    et ``node_uuid``, nécessaires ensuite à ``generer_sql_upsert_organisations``.
-    Le fichier de credentials n'est écrit qu'après succès du test de token.
+    Retourne le dict credentials — il contient **explicitement** ``provider_uuid`` et
+    ``node_uuid``. Le fichier de credentials n'est écrit qu'après succès du test de
+    token.
     """
     creds_existants = credentials_existants or {}
     print("=== Raccordement au portail ROOB ===\n")

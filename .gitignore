@@ -14,4 +14,3 @@ conf/telechargements/
 # Raccordement portail ROOB (artefacts générés, secrets)
 conf/credentials_portail.json
 conf/rudi-catalog-portal.ini
-conf/upsert_organisations_*.sql
